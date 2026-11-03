@@ -38,6 +38,33 @@ make build
 ./vantu serve --listen 0.0.0.0:8089 --data-dir ./data
 ```
 
+### 部署后将控制台自身发布到公网（自代理）
+
+适用于无法直接访问 `:8089` 的场景（如无图形界面的服务器、远程主机）。以下命令均在部署 Vantu 的机器上执行，CLI 通过本地 Unix Socket 通信，无需登录。Docker 部署时在命令前加 `docker exec -it vantu`。
+
+```bash
+# 1. 初始化管理员密码（--generate 自动生成并打印，或使用 --password 指定）
+xft admin passwd --generate
+
+# 2. 添加 DNS 凭据
+xft dns add-cf --api-token <CLOUDFLARE_API_TOKEN>
+# 或：xft dns add-dnspod --secret-id <ID> --secret-key <KEY>
+
+# 3. 生成边缘节点 Caddy 部署命令，复制到边缘 VPS 上执行
+xft node bootstrap --name edge --public-ip <边缘公网IP> --ts-ip <边缘TailscaleIP>
+
+# 4. 注册边缘节点（--secret 使用上一步输出的 Auth Secret）
+xft node add --name edge --public-ip <边缘公网IP> --ts-ip <边缘TailscaleIP> --secret <AUTH_SECRET> --default
+
+# 5. 发布控制台
+xft publish --target self --domain vantu.example.com --proxied --wait
+```
+
+- `--target self` 自动指向当前实例的监听端口；省略 `--domain` 时使用 `vantu.<默认根域名>`。
+- 未设置管理员密码时，`--target self` 会被拒绝执行，避免初始化页面暴露在公网。
+- 忘记密码时，在本机执行 `xft admin passwd --password <新密码>` 即可重置。
+- 也可以在 Web 控制台「发布服务」中选择「本机控制台」完成同样操作。
+
 ---
 
 ## AI CLI (`vantu` / `xft`) 常用示例
