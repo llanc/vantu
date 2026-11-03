@@ -1,0 +1,18 @@
+services:
+  vantu:
+    build: .
+    image: xiaofantu/vantu:latest
+    container_name: vantu
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TZ=Asia/Shanghai
+      - VANTU_DATA_DIR=/data
+      - VANTU_LISTEN_ADDR=0.0.0.0:8089
+      - VANTU_RELAY_PORT=18080
+    volumes:
+      - ./data:/data
+      # 只读挂载 Docker Socket：自动发现未映射宿主机端口的容器并通过 Local Relay 穿透
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 只读挂载 Tailscale Socket：零配置读取本机 100.x.x.x IP 与直连/DERP 隧道延迟
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro

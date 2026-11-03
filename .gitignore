@@ -1,0 +1,26 @@
+# Binaries
+/vantu
+/xft
+/bin/
+/dist/
+*.exe
+
+# Runtime Data
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.sock
+.master.key
+
+# Frontend Build & Deps
+/web/node_modules/
+/web/dist/*
+!/web/dist/.gitkeep
+
+# Local env & IDE
+.env
+.env.local
+.DS_Store
+.idea/
+.vscode/
