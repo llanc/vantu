@@ -13,7 +13,6 @@ const emit = defineEmits<{
   (e: 'toggle-theme'): void
 }>()
 
-const username = ref('admin')
 const password = ref('')
 const confirmPassword = ref('')
 const loading = ref(false)
@@ -35,9 +34,9 @@ async function handleSubmit() {
   loading.value = true
   try {
     if (!props.initialized) {
-      await api.setupAdmin(username.value, password.value)
+      await api.setupAdmin(password.value)
     } else {
-      await api.login(username.value, password.value)
+      await api.login(password.value)
     }
     emit('authenticated')
   } catch (err) {
@@ -75,20 +74,17 @@ async function handleSubmit() {
 
       <div>
         <h1 style="font-size:20px;font-weight:700;">
-          {{ initialized ? '登录' : '创建管理员账号' }}
+          {{ initialized ? '登录' : '设置管理员密码' }}
         </h1>
       </div>
 
       <div v-if="errMsg" class="alert-banner">{{ errMsg }}</div>
 
       <form style="display:flex;flex-direction:column;gap:14px;" @submit.prevent="handleSubmit">
-        <div class="field">
-          <label class="field-label" for="authUser">用户名</label>
-          <input id="authUser" v-model="username" class="input" type="text" autocomplete="username" required />
-        </div>
+        <input type="text" name="username" value="admin" autocomplete="username" hidden />
 
         <div class="field">
-          <label class="field-label" for="authPass">密码</label>
+          <label class="field-label" for="authPass">管理员密码</label>
           <input
             id="authPass"
             v-model="password"

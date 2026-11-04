@@ -25,12 +25,19 @@ func TestStoreCRUDAndWalLifecycle(t *testing.T) {
 		t.Fatalf("expected uninitialized store, got %v, err=%v", initOK, err)
 	}
 
-	if err := st.CreateOrUpdateAdmin(ctx, "admin", "$argon2id$hash"); err != nil {
+	if err := st.SetAdminPassword(ctx, "$argon2id$hash"); err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
 	initOK, _ = st.IsInitialized(ctx)
 	if !initOK {
-		t.Fatal("expected initialized store after CreateOrUpdateAdmin")
+		t.Fatal("expected initialized store after SetAdminPassword")
+	}
+	if err := st.SetAdminPassword(ctx, "$argon2id$hash2"); err != nil {
+		t.Fatalf("update admin: %v", err)
+	}
+	admin, err := st.GetAdmin(ctx)
+	if err != nil || admin.PasswordHash != "$argon2id$hash2" || admin.Username != "admin" {
+		t.Fatalf("expected single updated admin, got %+v, err=%v", admin, err)
 	}
 
 	// DNS Provider & Zone

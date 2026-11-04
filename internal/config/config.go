@@ -25,6 +25,7 @@ type Config struct {
 	ProbeInterval time.Duration
 	AdminPassword string
 	MasterKeyRaw  string
+	UpdateCheck   bool
 }
 
 // FromEnv constructs Config with sensible defaults for Homelab / Docker deployments.
@@ -59,7 +60,16 @@ func FromEnv() Config {
 		ProbeInterval: time.Duration(probeSec) * time.Second,
 		AdminPassword: os.Getenv("VANTU_ADMIN_PASSWORD"),
 		MasterKeyRaw:  os.Getenv("VANTU_MASTER_KEY"),
+		UpdateCheck:   !isOff(os.Getenv("VANTU_UPDATE_CHECK")),
 	}
+}
+
+func isOff(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", "off", "no":
+		return true
+	}
+	return false
 }
 
 func envOr(key, fallback string) string {

@@ -6,6 +6,21 @@ export interface AuthStatus {
   version: string
 }
 
+export interface UpdateInfo {
+  current_version: string
+  latest_version: string
+  has_update: boolean
+  release_url: string
+  release_notes: string
+  published_at?: string
+  checked_at?: string
+  check_error?: string
+  install_mode: 'binary' | 'docker'
+  can_self_update: boolean
+  self_update_note?: string
+  upgrade_command?: string
+}
+
 export interface DiscoveredPort {
   private_port: number
   public_port?: number
@@ -284,15 +299,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getAuthStatus: () => request<AuthStatus>('/auth/status'),
-  setupAdmin: (username: string, password: string) =>
-    request<{ username: string }>('/auth/setup', {
+  setupAdmin: (password: string) =>
+    request<{ session_token: string }>('/auth/setup', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ password }),
     }),
-  login: (username: string, password: string) =>
-    request<{ username: string }>('/auth/login', {
+  login: (password: string) =>
+    request<{ session_token: string }>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ password }),
     }),
   logout: () => request<{ logged_out: boolean }>('/auth/logout', { method: 'POST' }),
   changePassword: (current_password: string, new_password: string) =>
@@ -304,6 +319,12 @@ export const api = {
   getDashboard: () => request<DashboardData>('/dashboard'),
   getDoctor: () => request<{ healthy: boolean; checks: DoctorCheck[] }>('/doctor'),
   getSkill: () => request<{ endpoint: string; skill_md: string }>('/skill'),
+  getHealth: () => request<{ status: string; version: string }>('/healthz'),
+  getUpdateInfo: (refresh = false) => request<UpdateInfo>(`/update${refresh ? '?refresh=1' : ''}`),
+  applyUpdate: () =>
+    request<{ updated: boolean; from: string; to: string; restarting: boolean }>('/update/apply', {
+      method: 'POST',
+    }),
 
   publishRoute: (payload: PublishPayload) =>
     request<PublishResponse>('/routes', {

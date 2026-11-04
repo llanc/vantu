@@ -200,6 +200,20 @@ button:disabled { color: var(--text-muted); cursor: not-allowed; }
   color: var(--text-secondary);
   font-weight: 500;
 }
+.update-pill {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  background: var(--ok-bg);
+  border: 1px solid var(--ok-border);
+  color: var(--ok-fg);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: filter 0.15s;
+}
+.update-pill:hover {
+  filter: brightness(0.96);
+}
 .nav-tabs {
   display: flex;
   align-items: center;
@@ -367,6 +381,18 @@ button:disabled { color: var(--text-muted); cursor: not-allowed; }
   line-height: 1.15;
   letter-spacing: -0.02em;
 }
+.summary-value-btn {
+  align-self: flex-start;
+  padding: 2px 8px;
+  margin: -2px -8px;
+  border-radius: 6px;
+  color: var(--text-primary);
+  transition: background 0.15s, color 0.15s;
+}
+.summary-value-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-focus);
+}
 .summary-foot {
   font-size: 14px;
   color: var(--text-muted);
@@ -387,6 +413,11 @@ button:disabled { color: var(--text-muted); cursor: not-allowed; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+.discover-chip.more {
+  background: var(--bg-subtle);
+  border-color: var(--border-strong);
+  color: var(--text-secondary);
 }
 .discover-chip:hover { filter: brightness(0.96); }
 
@@ -556,6 +587,17 @@ button:disabled { color: var(--text-muted); cursor: not-allowed; }
   background: var(--warn-bg);
   border-color: var(--warn-border);
   color: var(--warn-fg);
+}
+.cf-switch.busy {
+  opacity: 0.72;
+  cursor: wait;
+}
+.cf-switch.busy .switch-knob {
+  animation: cf-pulse 0.9s ease-in-out infinite alternate;
+}
+@keyframes cf-pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
 }
 .switch-pill {
   width: 28px;

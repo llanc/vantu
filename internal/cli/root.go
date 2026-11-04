@@ -18,6 +18,7 @@ import (
 	"github.com/llanc/vantu/internal/orchestrator"
 	"github.com/llanc/vantu/internal/skilldoc"
 	"github.com/llanc/vantu/internal/store"
+	"github.com/llanc/vantu/internal/update"
 )
 
 type globalFlags struct {
@@ -64,6 +65,7 @@ func NewRootCmd() *cobra.Command {
 		newTokenCmd(gf),
 		newDoctorCmd(gf),
 		newSkillCmd(gf),
+		newUpdateCmd(gf),
 	)
 
 	return root
@@ -143,7 +145,7 @@ func newAdminCmd(gf *globalFlags) *cobra.Command {
 		Short: "初始化或重置本地管理员账号",
 	}
 
-	var username, password string
+	var password string
 	var generate bool
 	passwdCmd := &cobra.Command{
 		Use:   "passwd",
@@ -152,12 +154,10 @@ func newAdminCmd(gf *globalFlags) *cobra.Command {
   vantu admin passwd --password 'YourStrongPassword'`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			var res struct {
-				Username          string `json:"username"`
 				Updated           bool   `json:"updated"`
 				GeneratedPassword string `json:"generated_password"`
 			}
 			_, err := gf.execAPI(cmd.Context(), http.MethodPost, "/api/v1/auth/admin", map[string]any{
-				"username": username,
 				"password": password,
 				"generate": generate,
 			}, &res)
@@ -168,14 +168,13 @@ func newAdminCmd(gf *globalFlags) *cobra.Command {
 				return nil
 			}
 			if res.GeneratedPassword != "" {
-				fmt.Printf("管理员 %s 密码已生成（请立即妥善保存）：\n\n  %s\n\n", res.Username, res.GeneratedPassword)
+				fmt.Printf("管理员密码已生成（请立即妥善保存）：\n\n  %s\n\n", res.GeneratedPassword)
 			} else {
-				fmt.Printf("管理员 %s 密码已设置完成。\n", res.Username)
+				fmt.Println("管理员密码已设置完成。")
 			}
 			return nil
 		},
 	}
-	passwdCmd.Flags().StringVar(&username, "username", "admin", "管理员用户名")
 	passwdCmd.Flags().StringVar(&password, "password", "", "指定管理员密码（至少 6 位）")
 	passwdCmd.Flags().BoolVar(&generate, "generate", false, "自动生成高强度随机密码并打印")
 
@@ -184,7 +183,7 @@ func newAdminCmd(gf *globalFlags) *cobra.Command {
 }
 
 func newLoginCmd(gf *globalFlags) *cobra.Command {
-	var username, password string
+	var password string
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "登录远程小凡兔实例并保存凭据至 ~/.config/vantu/credentials.json",
@@ -200,7 +199,6 @@ func newLoginCmd(gf *globalFlags) *cobra.Command {
 			if tok == "" && password != "" {
 				cli := newAPIClient(ep, "", "")
 				env, raw, err := cli.call(cmd.Context(), http.MethodPost, "/api/v1/auth/login", map[string]string{
-					"username": username,
 					"password": password,
 				})
 				if err != nil {
@@ -245,7 +243,6 @@ func newLoginCmd(gf *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&username, "username", "admin", "管理员用户名")
 	cmd.Flags().StringVar(&password, "password", "", "管理员密码（若未使用 --token）")
 	return cmd
 }
@@ -874,6 +871,57 @@ func newDoctorCmd(gf *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newUpdateCmd(gf *globalFlags) *cobra.Command {
+	var apply bool
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "检查小凡兔新版本，二进制部署可加 --apply 一键更新并重启",
+		Example: `  vantu update
+  vantu update --apply`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var info update.Info
+			if _, err := gf.execAPI(cmd.Context(), http.MethodGet, "/api/v1/update?refresh=1", nil, &info); err != nil {
+				return err
+			}
+			if !apply {
+				if gf.jsonOut {
+					return nil
+				}
+				fmt.Printf("当前版本: %s\n", info.CurrentVersion)
+				switch {
+				case info.CheckError != "":
+					fmt.Printf("检查失败: %s\n", info.CheckError)
+				case info.HasUpdate:
+					fmt.Printf("发现新版本: %s  %s\n", info.LatestVersion, info.ReleaseURL)
+					if info.CanSelfUpdate {
+						fmt.Println("执行 vantu update --apply 一键更新")
+					} else if info.UpgradeCommand != "" {
+						fmt.Printf("升级命令: %s\n", info.UpgradeCommand)
+					} else {
+						fmt.Println(info.SelfUpdateNote)
+					}
+				default:
+					fmt.Printf("已是最新版本 (最新发布 %s)\n", info.LatestVersion)
+				}
+				return nil
+			}
+			var res struct {
+				From string `json:"from"`
+				To   string `json:"to"`
+			}
+			if _, err := gf.execAPI(cmd.Context(), http.MethodPost, "/api/v1/update/apply", nil, &res); err != nil {
+				return err
+			}
+			if !gf.jsonOut {
+				fmt.Printf("已从 %s 更新至 %s，服务正在重启。\n", res.From, res.To)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&apply, "apply", false, "下载、校验并替换二进制，随后自动重启服务")
+	return cmd
 }
 
 func newSkillCmd(gf *globalFlags) *cobra.Command {

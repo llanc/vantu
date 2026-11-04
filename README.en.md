@@ -94,7 +94,19 @@ xft route inspect demo.example.com --probe
 
 # 5. Export SKILL.md for Claude Code / Cursor / Codex / Antigravity
 xft skill export -o ~/.claude/skills/vantu-publish/SKILL.md
+
+# 6. Check for a new version; binary installs can download, verify and restart in one step
+xft update
+xft update --apply
 ```
+
+### Updates
+
+The console checks GitHub Releases every 12 hours and shows a badge in the top bar when a new version is available. Release notes are under **Settings → 版本与更新** (Version & Updates).
+
+- **Binary install**: click **更新至 vX.Y.Z** or run `xft update --apply`. Vantu downloads the package for the current platform, verifies its SHA-256 against `checksums.txt`, atomically replaces the executable and re-execs in place (same PID, transparent to systemd). The service user needs write access to the binary's directory.
+- **Docker install**: the container never replaces itself; the console shows the upgrade command `docker compose pull vantu && docker compose up -d vantu`.
+- Set `VANTU_UPDATE_CHECK=off` to disable version checks entirely (e.g. air-gapped hosts).
 
 ### Local Socket & Remote Endpoint Resolution Order
 
@@ -123,6 +135,7 @@ If no local socket is found, it falls back to `~/.config/vantu/credentials.json`
 | `VANTU_DOCKER_SOCK` | `/var/run/docker.sock` | Docker Engine socket path |
 | `VANTU_TAILSCALE_SOCK` | `/var/run/tailscale/tailscaled.sock` | Tailscale LocalAPI socket path |
 | `VANTU_PROBE_INTERVAL_SEC` | `60` | Background route & certificate probe interval in seconds (min `10`) |
+| `VANTU_UPDATE_CHECK` | `on` | Set to `off` to disable GitHub Releases version checks |
 | `VANTU_MASTER_KEY` | `<VANTU_DATA_DIR>/.master.key` | Master encryption key for credentials (optional env override) |
 | `VANTU_ADMIN_PASSWORD` | Empty | Bootstrap administrator password on first start (optional) |
 

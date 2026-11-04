@@ -908,11 +908,6 @@ func (s *Service) ToggleProxy(ctx context.Context, idOrDomain string, proxied bo
 	if err := s.store.UpsertRoute(ctx, *rt); err != nil {
 		return nil, err
 	}
-	if s.prober != nil {
-		if fresh, pErr := s.prober.ProbeRoute(ctx, rt.ID); pErr == nil {
-			rt = fresh
-		}
-	}
 
 	modeText := "DNS 直连"
 	if proxied {
@@ -928,6 +923,14 @@ func (s *Service) ToggleProxy(ctx context.Context, idOrDomain string, proxied bo
 	})
 	if s.hub != nil {
 		s.hub.Publish("routes_updated", map[string]any{"route_id": rt.ID})
+	}
+	if s.prober != nil {
+		routeID := rt.ID
+		go func() {
+			pCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			_, _ = s.prober.ProbeRoute(pCtx, routeID)
+		}()
 	}
 	return rt, nil
 }

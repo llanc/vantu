@@ -431,8 +431,8 @@ func TestFullLifecyclePublishRelayProbeAndDriftReconcile(t *testing.T) {
 		t.Fatal("expected self-publish to be rejected when admin password is not initialized")
 	}
 	adminHash, _ := crypto.HashPassword("VantuSelf#2026")
-	if err := st.CreateOrUpdateAdmin(ctx, "admin", adminHash); err != nil {
-		t.Fatalf("CreateOrUpdateAdmin failed: %v", err)
+	if err := st.SetAdminPassword(ctx, adminHash); err != nil {
+		t.Fatalf("SetAdminPassword failed: %v", err)
 	}
 	selfPub, err := svc.Publish(ctx, orchestrator.PublishInput{Target: "self"}, "test")
 	if err != nil {

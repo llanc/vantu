@@ -230,21 +230,31 @@ func (s *Store) IsInitialized(ctx context.Context) (bool, error) {
 	return cnt > 0, nil
 }
 
-func (s *Store) CreateOrUpdateAdmin(ctx context.Context, username, passwordHash string) error {
+// SetAdminPassword sets the password of the single console administrator,
+// creating it on first use. Legacy databases may hold several rows; the
+// earliest one is treated as the administrator.
+func (s *Store) SetAdminPassword(ctx context.Context, passwordHash string) error {
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
-INSERT INTO admin_users (username, password_hash, created_at, updated_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, updated_at = excluded.updated_at`,
-		username, passwordHash, now, now)
+	res, err := s.db.ExecContext(ctx,
+		"UPDATE admin_users SET password_hash = ?, updated_at = ? WHERE id = (SELECT MIN(id) FROM admin_users)",
+		passwordHash, now)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx,
+		"INSERT INTO admin_users (username, password_hash, created_at, updated_at) VALUES ('admin', ?, ?, ?)",
+		passwordHash, now, now)
 	return err
 }
 
-func (s *Store) GetAdmin(ctx context.Context, username string) (*AdminUser, error) {
+func (s *Store) GetAdmin(ctx context.Context) (*AdminUser, error) {
 	var u AdminUser
 	err := s.db.QueryRowContext(ctx,
-		"SELECT id, username, password_hash, created_at, updated_at FROM admin_users WHERE username = ?",
-		username).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
+		"SELECT id, username, password_hash, created_at, updated_at FROM admin_users ORDER BY id LIMIT 1").
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

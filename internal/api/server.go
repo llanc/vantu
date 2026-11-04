@@ -26,6 +26,7 @@ import (
 	"github.com/llanc/vantu/internal/skilldoc"
 	"github.com/llanc/vantu/internal/store"
 	"github.com/llanc/vantu/internal/ulid"
+	"github.com/llanc/vantu/internal/update"
 	"github.com/llanc/vantu/web"
 )
 
@@ -56,6 +57,14 @@ type Server struct {
 	router   chi.Router
 	limitMu  sync.Mutex
 	attempts map[string]*loginAttempt
+	updater  *update.Manager
+	restart  func()
+}
+
+// EnableUpdates turns on version checking; restart is invoked after a successful self-update.
+func (s *Server) EnableUpdates(m *update.Manager, restart func()) {
+	s.updater = m
+	s.restart = restart
 }
 
 func NewServer(cfg config.Config, svc *orchestrator.Service) *Server {
@@ -148,6 +157,8 @@ func (s *Server) buildRouter() chi.Router {
 			priv.Get("/dashboard", s.handleDashboard)
 			priv.Get("/doctor", s.handleDoctor)
 			priv.Get("/skill", s.handleSkill)
+			priv.Get("/update", s.handleUpdateInfo)
+			priv.Post("/update/apply", s.handleUpdateApply)
 
 			priv.Get("/tokens", s.handleListTokens)
 			priv.Post("/tokens", s.handleCreateToken)
@@ -369,16 +380,11 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, err)
 		return
-	}
-	username := strings.TrimSpace(body.Username)
-	if username == "" {
-		username = "admin"
 	}
 	if len(body.Password) < 6 {
 		writeError(w, &orchestrator.AppError{
@@ -394,12 +400,17 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := s.svc.Store().CreateOrUpdateAdmin(r.Context(), username, hash); err != nil {
+	if err := s.svc.Store().SetAdminPassword(r.Context(), hash); err != nil {
+		writeErr(w, err)
+		return
+	}
+	user, err := s.svc.Store().GetAdmin(r.Context())
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	tok, err := s.issueSessionCookie(w, r, username)
+	tok, err := s.issueSessionCookie(w, r, user.Username)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -408,13 +419,12 @@ func (s *Server) handleAuthSetup(w http.ResponseWriter, r *http.Request) {
 	s.svc.Store().AppendAudit(r.Context(), store.AuditEvent{
 		Severity:    "info",
 		Category:    "auth",
-		TargetLabel: username,
+		TargetLabel: "管理员",
 		Message:     "已完成小凡兔控制台首次管理员初始化",
 		Actor:       "setup-wizard",
 	})
 
 	writeOK(w, map[string]any{
-		"username":      username,
 		"session_token": tok,
 	})
 }
@@ -431,24 +441,19 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Username string `json:"username"`
 		Password string `json:"password"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, err)
 		return
 	}
-	username := strings.TrimSpace(body.Username)
-	if username == "" {
-		username = "admin"
-	}
 
-	user, err := s.svc.Store().GetAdmin(r.Context(), username)
+	user, err := s.svc.Store().GetAdmin(r.Context())
 	if err != nil || !crypto.VerifyPassword(body.Password, user.PasswordHash) {
 		s.recordLoginFailure(ip)
 		writeError(w, &orchestrator.AppError{
 			Code:       "AUTH_REQUIRED",
-			Message:    "用户名或密码错误",
+			Message:    "密码错误",
 			HTTPStatus: http.StatusUnauthorized,
 		})
 		return
@@ -464,13 +469,12 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	s.svc.Store().AppendAudit(r.Context(), store.AuditEvent{
 		Severity:    "info",
 		Category:    "auth",
-		TargetLabel: user.Username,
+		TargetLabel: "管理员",
 		Message:     fmt.Sprintf("管理员登录成功 (%s)", ip),
 		Actor:       "web:" + user.Username,
 	})
 
 	writeOK(w, map[string]any{
-		"username":      user.Username,
 		"session_token": tok,
 	})
 }
@@ -508,7 +512,7 @@ func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.svc.Store().GetAdmin(r.Context(), "admin")
+	user, err := s.svc.Store().GetAdmin(r.Context())
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -526,7 +530,7 @@ func (s *Server) handleAuthPassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if err := s.svc.Store().CreateOrUpdateAdmin(r.Context(), user.Username, newHash); err != nil {
+	if err := s.svc.Store().SetAdminPassword(r.Context(), newHash); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -551,7 +555,6 @@ func (s *Server) handleAdminSetPassword(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body struct {
-		Username string `json:"username"`
 		Password string `json:"password"`
 		Generate bool   `json:"generate"`
 	}
@@ -560,10 +563,6 @@ func (s *Server) handleAdminSetPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	username := strings.TrimSpace(body.Username)
-	if username == "" {
-		username = "admin"
-	}
 	pwd := body.Password
 	generated := ""
 	if pwd == "" && body.Generate {
@@ -590,7 +589,7 @@ func (s *Server) handleAdminSetPassword(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, err)
 		return
 	}
-	if err := s.svc.Store().CreateOrUpdateAdmin(r.Context(), username, hash); err != nil {
+	if err := s.svc.Store().SetAdminPassword(r.Context(), hash); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -602,14 +601,13 @@ func (s *Server) handleAdminSetPassword(w http.ResponseWriter, r *http.Request) 
 	s.svc.Store().AppendAudit(r.Context(), store.AuditEvent{
 		Severity:    "info",
 		Category:    "auth",
-		TargetLabel: username,
+		TargetLabel: "管理员",
 		Message:     msg,
 		Actor:       actorFrom(r),
 	})
 
 	resp := map[string]any{
-		"username": username,
-		"updated":  true,
+		"updated": true,
 	}
 	if generated != "" {
 		resp["generated_password"] = generated
@@ -746,6 +744,60 @@ func (s *Server) handleSkill(w http.ResponseWriter, r *http.Request) {
 		"endpoint": endpoint,
 		"skill_md": skilldoc.Render(endpoint),
 	})
+}
+
+func (s *Server) handleUpdateInfo(w http.ResponseWriter, r *http.Request) {
+	if s.updater == nil {
+		writeError(w, &orchestrator.AppError{
+			Code:       "NOT_FOUND",
+			Message:    "当前实例未启用版本更新检查",
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	writeOK(w, s.updater.Info(r.Context(), r.URL.Query().Get("refresh") == "1"))
+}
+
+func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	if s.updater == nil || s.restart == nil {
+		writeError(w, &orchestrator.AppError{
+			Code:       "NOT_FOUND",
+			Message:    "当前实例未启用一键更新",
+			HTTPStatus: http.StatusNotFound,
+		})
+		return
+	}
+	from := config.Version
+	to, err := s.updater.Apply(r.Context())
+	if err != nil {
+		writeError(w, &orchestrator.AppError{
+			Code:       "UPDATE_FAILED",
+			Message:    err.Error(),
+			Suggestion: "可前往 GitHub Releases 手动下载新版本替换二进制",
+			HTTPStatus: http.StatusConflict,
+		})
+		return
+	}
+	s.svc.Store().AppendAudit(r.Context(), store.AuditEvent{
+		Severity:    "info",
+		Category:    "system",
+		TargetLabel: to,
+		Message:     fmt.Sprintf("已从 %s 更新至 %s，服务即将重启", from, to),
+		Actor:       actorFrom(r),
+	})
+	writeOK(w, map[string]any{
+		"updated":    true,
+		"from":       from,
+		"to":         to,
+		"restarting": true,
+	})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		s.restart()
+	}()
 }
 
 func (s *Server) handleListTokens(w http.ResponseWriter, r *http.Request) {

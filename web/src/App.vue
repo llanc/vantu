@@ -8,6 +8,7 @@ import {
   type DoctorCheck,
   type RouteRecord,
   type StepProgress,
+  type UpdateInfo,
 } from './api'
 import AuthGate from './components/AuthGate.vue'
 import PublishModal from './components/PublishModal.vue'
@@ -36,7 +37,6 @@ const nodeFilter = ref('all')
 const statusFilter = ref('all')
 
 const dash = ref<DashboardData | null>(null)
-const skillMD = ref('')
 const doctorChecks = ref<DoctorCheck[]>([])
 const doctorBusy = ref(false)
 
@@ -48,6 +48,8 @@ const showNodeModal = ref(false)
 const showDNSModal = ref(false)
 const showCmdPalette = ref(false)
 const inspectedRouteId = ref<string | null>(null)
+const expandAllUnexposed = ref(false)
+const proxyBusyMap = ref<Record<string, boolean>>({})
 
 const newTokenName = ref('cli-token')
 const newTokenScope = ref<'admin' | 'readonly'>('admin')
@@ -55,6 +57,10 @@ const createdPlainToken = ref('')
 
 const curPassword = ref('')
 const nextPassword = ref('')
+
+const updateInfo = ref<UpdateInfo | null>(null)
+const updateChecking = ref(false)
+const updateApplying = ref(false)
 
 const toastText = ref('')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
@@ -88,6 +94,7 @@ async function checkAuthAndLoad() {
     if (st.authenticated) {
       await refreshDashboard()
       connectSSE()
+      loadUpdateInfo()
     }
   } catch (err) {
     showToast((err as Error).message)
@@ -121,6 +128,13 @@ function connectSSE() {
       } else {
         livePublishSteps.value.push(d)
       }
+    } catch {
+      // Ignore malformed frame
+    }
+  })
+  es.addEventListener('update_available', (ev: MessageEvent) => {
+    try {
+      updateInfo.value = JSON.parse(ev.data).data as UpdateInfo
     } catch {
       // Ignore malformed frame
     }
@@ -161,6 +175,10 @@ onBeforeUnmount(() => {
 
 const unexposedList = computed(() =>
   (dash.value?.containers || []).filter((c) => c.published_domains.length === 0)
+)
+
+const visibleUnexposedList = computed(() =>
+  expandAllUnexposed.value ? unexposedList.value : unexposedList.value.slice(0, 3)
 )
 
 const filteredRoutes = computed(() => {
@@ -279,13 +297,21 @@ function stateBadge(state: string): { label: string; cls: string } {
 }
 
 async function onToggleProxy(r: RouteRecord) {
-  if (!r.supports_proxy) return
+  if (!r.supports_proxy || proxyBusyMap.value[r.id]) return
+  const prev = r.dns_proxied
+  const next = !prev
+  proxyBusyMap.value[r.id] = true
+  r.dns_proxied = next
   try {
-    const updated = await api.toggleProxy(r.id, !r.dns_proxied)
+    const updated = await api.toggleProxy(r.id, next)
+    r.dns_proxied = updated.dns_proxied
     await refreshDashboard()
     showToast(`${updated.full_domain}: ${updated.dns_proxied ? '已开启 CDN' : '已切回 DNS 直连'}`)
   } catch (err) {
+    r.dns_proxied = prev
     showToast((err as Error).message)
+  } finally {
+    delete proxyBusyMap.value[r.id]
   }
 }
 
@@ -312,17 +338,65 @@ async function triggerGlobalProbe() {
   }
 }
 
-async function switchToView(v: 'dashboard' | 'nodes' | 'dns' | 'cli') {
+function switchToView(v: 'dashboard' | 'nodes' | 'dns' | 'cli') {
   activeView.value = v
-  if (v === 'cli' && !skillMD.value) {
-    try {
-      const res = await api.getSkill()
-      skillMD.value = res.skill_md
-    } catch {
-      // Ignore
-    }
-  }
 }
+
+const aiPromptText = computed(() => {
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8089'
+  const zones =
+    dash.value?.zones.map((z) => `${z.zone_name}${z.is_default ? '(默认)' : ''}${z.supports_proxy ? '[支持CDN]' : ''}`).join(', ') ||
+    '暂未配置'
+  const nodes =
+    dash.value?.nodes.map((n) => `${n.name}(${n.public_ipv4}${n.is_default ? ',默认' : ''})`).join(', ') ||
+    '暂未配置'
+  const routes =
+    dash.value?.routes.map((r) => `${r.full_domain} -> ${r.local_target_host}:${r.local_target_port}`).join(', ') ||
+    '暂无'
+  const unpub =
+    unexposedList.value.map((c) => `${c.name}(:${c.recommended_port})`).join(', ') ||
+    '无'
+
+  return `请帮我操作当前「小凡兔 Vantu」网关控制台（将本地 Docker 容器或内网端口发布为公网 HTTPS 服务）。
+
+【当前控制台实时快照】
+- 控制台地址: ${origin}
+- 可用根域名: ${zones}
+- 边缘节点: ${nodes}
+- 已发布路由: ${routes}
+- 待发布容器: ${unpub}
+
+【第一步：自动检测连接通道（严禁向用户索要明文 API Token）】
+请按以下顺序自动探测执行环境：
+
+1. 场景 A（同机 / SSH 环境，免 Token 优先）：
+   先检查本机是否存在 \`xft\` 命令或 \`vantu\` 容器：
+   \`xft capabilities --json 2>/dev/null || docker exec vantu xft capabilities --json 2>/dev/null\`
+   若返回 \`"ok": true\`，后续所有操作直接调用本机 \`xft\`（通过本地 Unix Socket 通信，无需任何 Token）。
+
+2. 场景 B（跨机器远程环境，Token 走本地凭据或环境变量，不进对话上下文）：
+   若不在小凡兔宿主机上，请检查当前环境是否已配置远程凭据：
+   - 若本机装有 \`xft\` CLI：检查 \`~/.config/vantu/credentials.json\` 或环境变量 \`$VANTU_TOKEN\`；若未配置，请引导我自己在终端执行一次：
+     \`xft login --endpoint ${origin} --token <从控制台设置页创建的API_Token>\`
+     （凭据保存在我本机 \`0600\` 权限文件中，你直接调用 \`xft ... --json\` 即可，全程不要让我把 Token 发到聊天框）。
+   - 若本机未装 \`xft\` CLI（纯 HTTP API 调用）：先检查 \`[ -n "$VANTU_TOKEN" ]\`。若为空，请引导我自己在本地终端或环境配置中设置：
+     \`export VANTU_ENDPOINT="${origin}" && export VANTU_TOKEN="<从控制台设置页创建的API_Token>"\`
+     设置完成后你直接引用 \`$VANTU_ENDPOINT\` 与 \`$VANTU_TOKEN\` 环境变量发起请求，切勿让我将明文 Token 粘贴到对话中。
+
+【第二步：常用操作速查】
+- CLI 方式（同机或已执行 \`xft login\`）：
+  - 查看能力与容器：\`xft capabilities --json\`
+  - 预览/发布服务：\`xft publish --target <container:容器名|IP:端口|self> --domain <完整域名> --preset <web|sse|webdav|https_insecure> [--proxied] [--dry-run] --json\`
+  - 切换 CDN 代理：\`xft route proxy <完整域名> --on|--off --json\`
+  - 拨测/暂停/恢复/删除：\`xft route inspect <完整域名> --probe --json\` | \`xft route pause|resume <完整域名> --json\` | \`xft route rm <完整域名> --yes --json\`
+- HTTP API 方式（引用本地 \`$VANTU_TOKEN\` 环境变量）：
+  - 查看能力：\`curl -sS -H "Authorization: Bearer $VANTU_TOKEN" "${origin}/api/v1/capabilities"\`
+  - 发布路由：\`curl -sS -X POST -H "Authorization: Bearer $VANTU_TOKEN" -H "Content-Type: application/json" "${origin}/api/v1/routes" -d '{"target":"container:容器名","domain":"子域名.根域名","preset":"web","dns_proxied":false}'\`
+  - 切换 CDN：\`curl -sS -X PATCH -H "Authorization: Bearer $VANTU_TOKEN" -H "Content-Type: application/json" "${origin}/api/v1/routes/<完整域名>/proxy" -d '{"proxied":true}'\`
+  - 删除路由：\`curl -sS -X DELETE -H "Authorization: Bearer $VANTU_TOKEN" "${origin}/api/v1/routes/<完整域名>?delete_dns=true"\`
+
+请先自动检测你当前可用的连接方式，然后协助我完成以下需求：`
+})
 
 async function handleCreateToken() {
   try {
@@ -376,6 +450,50 @@ async function handleLogout() {
   initialized.value = true
 }
 
+async function loadUpdateInfo(refresh = false) {
+  updateChecking.value = true
+  try {
+    updateInfo.value = await api.getUpdateInfo(refresh)
+    if (refresh && updateInfo.value.check_error) {
+      showToast(updateInfo.value.check_error)
+    } else if (refresh && !updateInfo.value.has_update) {
+      showToast('已是最新版本')
+    }
+  } catch (err) {
+    if (refresh) showToast((err as Error).message)
+  } finally {
+    updateChecking.value = false
+  }
+}
+
+async function handleApplyUpdate() {
+  const target = updateInfo.value?.latest_version
+  if (!target || !confirm(`确认更新至 ${target}？更新完成后服务会自动重启，期间控制台短暂不可用。`)) return
+  updateApplying.value = true
+  try {
+    await api.applyUpdate()
+    showToast(`已更新至 ${target}，正在等待服务重启...`)
+    const deadline = Date.now() + 90_000
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000))
+      try {
+        const h = await api.getHealth()
+        if (h.version === target) {
+          window.location.reload()
+          return
+        }
+      } catch {
+        // Service is restarting
+      }
+    }
+    showToast('服务重启超时，请检查进程状态后手动刷新页面')
+  } catch (err) {
+    showToast((err as Error).message)
+  } finally {
+    updateApplying.value = false
+  }
+}
+
 function copyText(text: string, label: string) {
   navigator.clipboard?.writeText(text)
   showToast(`已复制${label}`)
@@ -412,6 +530,15 @@ function copyText(text: string, label: string) {
           </div>
           <span class="brand-title">小凡兔 Vantu</span>
           <span class="brand-tag tnum">{{ version }}</span>
+          <button
+            v-if="updateInfo?.has_update"
+            type="button"
+            class="update-pill tnum"
+            :title="`发现新版本 ${updateInfo.latest_version}，点击查看`"
+            @click="switchToView('cli')"
+          >
+            新版本 {{ updateInfo.latest_version }}
+          </button>
         </div>
 
         <nav class="nav-tabs" aria-label="主导航">
@@ -513,17 +640,34 @@ function copyText(text: string, label: string) {
 
           <div class="summary-cell">
             <div class="summary-label"><span>本地未发布容器</span></div>
-            <div class="summary-value tnum">{{ unexposedList.length }}</div>
+            <button
+              type="button"
+              class="summary-value summary-value-btn tnum"
+              :disabled="unexposedList.length === 0"
+              :title="unexposedList.length > 0 ? '点击选择容器并发布' : ''"
+              @click="unexposedList.length > 0 && openPublish(unexposedList[0])"
+            >
+              {{ unexposedList.length }}
+            </button>
             <div class="summary-foot">
               <template v-if="unexposedList.length > 0">
                 <button
-                  v-for="c in unexposedList.slice(0, 3)"
+                  v-for="c in visibleUnexposedList"
                   :key="c.id"
                   type="button"
                   class="discover-chip"
                   @click="openPublish(c)"
                 >
                   + {{ c.name }}
+                </button>
+                <button
+                  v-if="unexposedList.length > 3"
+                  type="button"
+                  class="discover-chip more"
+                  :title="expandAllUnexposed ? '收起列表' : `展开其余 ${unexposedList.length - 3} 个未发布容器`"
+                  @click="expandAllUnexposed = !expandAllUnexposed"
+                >
+                  {{ expandAllUnexposed ? '收起' : `... +${unexposedList.length - 3}` }}
                 </button>
               </template>
               <span v-else>
@@ -658,11 +802,12 @@ function copyText(text: string, label: string) {
                   v-if="r.supports_proxy"
                   type="button"
                   class="cf-switch"
-                  :class="{ on: r.dns_proxied }"
-                  :title="r.dns_proxied ? '关闭 Cloudflare CDN' : '开启 Cloudflare CDN'"
+                  :class="{ on: r.dns_proxied, busy: !!proxyBusyMap[r.id] }"
+                  :disabled="!!proxyBusyMap[r.id]"
+                  :title="proxyBusyMap[r.id] ? '正在切换 CDN 状态...' : r.dns_proxied ? '关闭 Cloudflare CDN' : '开启 Cloudflare CDN'"
                   @click.stop="onToggleProxy(r)"
                 >
-                  <span>CDN</span>
+                  <span>{{ proxyBusyMap[r.id] ? '切换中' : 'CDN' }}</span>
                   <span class="switch-pill"><span class="switch-knob"></span></span>
                 </button>
               </div>
@@ -951,6 +1096,60 @@ function copyText(text: string, label: string) {
           </div>
         </div>
 
+        <!-- Version & Update -->
+        <div class="panel-card" style="margin-bottom:18px;">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <div>
+              <h2 style="font-size:17px;font-weight:700;">版本与更新</h2>
+              <p class="tnum" style="font-size:13px;color:var(--text-secondary);margin-top:2px;">
+                当前 {{ version }}
+                <template v-if="updateInfo?.latest_version"> · 最新发布 {{ updateInfo.latest_version }}</template>
+                <template v-if="updateInfo?.checked_at"> · 检查于 {{ new Date(updateInfo.checked_at).toLocaleString() }}</template>
+              </p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" class="btn-outline" :disabled="updateChecking || updateApplying" @click="loadUpdateInfo(true)">
+                {{ updateChecking ? '检查中...' : '检查更新' }}
+              </button>
+              <button
+                v-if="updateInfo?.has_update && updateInfo.can_self_update"
+                type="button"
+                class="btn-primary"
+                :disabled="updateApplying"
+                @click="handleApplyUpdate"
+              >
+                {{ updateApplying ? '更新中...' : `更新至 ${updateInfo.latest_version}` }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="updateInfo?.check_error" style="font-size:13px;color:var(--text-secondary);">
+            {{ updateInfo.check_error }}
+          </div>
+
+          <template v-if="updateInfo?.has_update">
+            <div v-if="updateInfo.upgrade_command" style="display:flex;flex-direction:column;gap:6px;">
+              <div style="font-size:13px;color:var(--text-secondary);">
+                {{ updateInfo.self_update_note }}，在 docker-compose.yml 所在目录执行：
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <code class="code-block" style="flex:1;margin:0;font-size:12.5px;">{{ updateInfo.upgrade_command }}</code>
+                <button type="button" class="btn-outline" @click="copyText(updateInfo.upgrade_command, '升级命令')">复制</button>
+              </div>
+            </div>
+            <div v-else-if="!updateInfo.can_self_update" style="font-size:13px;color:var(--warn-fg);">
+              {{ updateInfo.self_update_note }}
+            </div>
+            <details v-if="updateInfo.release_notes">
+              <summary style="cursor:pointer;font-size:13px;font-weight:600;">更新说明</summary>
+              <pre class="code-block" style="max-height:200px;overflow-y:auto;font-size:12.5px;white-space:pre-wrap;">{{ updateInfo.release_notes }}</pre>
+            </details>
+            <a :href="updateInfo.release_url" target="_blank" rel="noopener" style="font-size:13px;color:var(--accent-focus);">
+              在 GitHub 查看发布页 →
+            </a>
+          </template>
+        </div>
+
         <div class="panel-grid" style="margin-bottom:18px;">
           <!-- API Tokens -->
           <div class="panel-card">
@@ -997,20 +1196,24 @@ function copyText(text: string, label: string) {
             </div>
           </div>
 
-          <!-- SKILL.md Export -->
+          <!-- AI Assistant Prompt -->
           <div class="panel-card">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-              <h2 style="font-size:17px;font-weight:700;">AI CLI 技能文件 (SKILL.md)</h2>
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <div>
+                <h2 style="font-size:17px;font-weight:700;">AI 助手操控提示词</h2>
+                <p style="font-size:13px;color:var(--text-secondary);margin-top:2px;">
+                  不含明文密钥。粘贴给大模型后，AI 会优先本机免密执行，或引导你在本地终端配置凭据
+                </p>
+              </div>
               <button
-                v-if="skillMD"
                 type="button"
-                class="btn-outline"
-                @click="copyText(skillMD, ' SKILL.md')"
+                class="btn-primary"
+                @click="copyText(aiPromptText, ' AI 提示词')"
               >
-                复制
+                复制提示词
               </button>
             </div>
-            <pre class="code-block" style="max-height:220px;overflow-y:auto;">{{ skillMD || '加载中...' }}</pre>
+            <pre class="code-block" style="max-height:220px;overflow-y:auto;font-size:12.5px;">{{ aiPromptText }}</pre>
           </div>
         </div>
 

@@ -94,7 +94,19 @@ xft route inspect demo.example.com --probe
 
 # 5. 导出供 Claude Code / Cursor / Codex 使用的 SKILL.md
 xft skill export -o ~/.claude/skills/vantu-publish/SKILL.md
+
+# 6. 检查新版本；二进制部署可一键下载、校验并重启
+xft update
+xft update --apply
 ```
+
+### 版本更新
+
+控制台每 12 小时检查一次 GitHub Releases，发现新版本时在顶栏提示，「设置 → 版本与更新」可查看更新说明。
+
+- **二进制部署**：点击「更新至 vX.Y.Z」或执行 `xft update --apply`，会下载当前平台的发布包并用 `checksums.txt` 校验 SHA-256，再原子替换可执行文件并原地重启（PID 不变，systemd 无感知）。运行用户需要对二进制所在目录有写权限。
+- **Docker 部署**：容器内不做自替换，控制台会给出升级命令：`docker compose pull vantu && docker compose up -d vantu`。
+- 设置 `VANTU_UPDATE_CHECK=off` 可完全关闭版本检查（离线环境适用）。
 
 ### 本地 Socket 与远程连接解析顺序
 
@@ -123,6 +135,7 @@ xft skill export -o ~/.claude/skills/vantu-publish/SKILL.md
 | `VANTU_DOCKER_SOCK` | `/var/run/docker.sock` | Docker Engine Socket 路径 |
 | `VANTU_TAILSCALE_SOCK` | `/var/run/tailscale/tailscaled.sock` | Tailscale LocalAPI Socket 路径 |
 | `VANTU_PROBE_INTERVAL_SEC` | `60` | 后台链路与证书巡检周期（秒，最小 `10`） |
+| `VANTU_UPDATE_CHECK` | `on` | 设为 `off` 关闭 GitHub Releases 版本检查 |
 | `VANTU_MASTER_KEY` | 自动生成 `<VANTU_DATA_DIR>/.master.key` | 凭据加密主密钥（可选通过环境变量外部注入） |
 | `VANTU_ADMIN_PASSWORD` | 空 | 首次启动时自动初始化的管理员密码（可选） |
 
