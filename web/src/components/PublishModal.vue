@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (e: 'published', msg: string): void
   (e: 'open-dns'): void
   (e: 'open-node'): void
+  (e: 'inspect-domain', domain: string): void
 }>()
 
 const sourceTab = ref<'docker' | 'manual' | 'self'>(
@@ -47,10 +48,15 @@ const authEnabled = ref(false)
 const authUser = ref('')
 const authPassword = ref('')
 
-// Unpublished containers first; published ones stay selectable for extra domains.
-const sortedContainers = computed(() =>
-  [...props.containers].sort((a, b) => Number(a.published_domains.length > 0) - Number(b.published_domains.length > 0))
-)
+const unpublishedContainers = computed(() => props.containers.filter((c) => c.published_domains.length === 0))
+// Published containers stay selectable so a second domain can point at the same service.
+const publishedContainers = computed(() => props.containers.filter((c) => c.published_domains.length > 0))
+const showPublished = ref(false)
+
+const selectedPublishedDomains = computed(() => {
+  if (sourceTab.value !== 'docker') return []
+  return props.containers.find((c) => c.name === selectedContainer.value)?.published_domains ?? []
+})
 
 const dryRunCLI = ref('')
 const loading = ref(false)
@@ -90,8 +96,12 @@ onMounted(() => {
 
   if (props.initialContainer) {
     pickContainer(props.initialContainer)
-  } else if (sortedContainers.value.length > 0) {
-    pickContainer(sortedContainers.value[0])
+    if (props.initialContainer.published_domains.length > 0) showPublished.value = true
+  } else if (unpublishedContainers.value.length > 0) {
+    pickContainer(unpublishedContainers.value[0])
+  } else if (publishedContainers.value.length > 0) {
+    showPublished.value = true
+    pickContainer(publishedContainers.value[0])
   } else {
     sourceTab.value = 'manual'
     subdomain.value = 'app'
@@ -268,25 +278,57 @@ async function handlePublish() {
             {{ t('publish.selfDesc') }}
           </div>
 
-          <div v-if="sourceTab === 'docker' && containers.length > 0" class="container-pick-list">
-            <button
-              v-for="c in sortedContainers"
-              :key="c.id"
-              type="button"
-              class="pick-item"
-              :class="{ selected: selectedContainer === c.name, published: c.published_domains.length > 0 }"
-              @click="pickContainer(c)"
-            >
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;">
-                <strong style="font-size:14px;">{{ c.name }}</strong>
-                <span v-if="c.published_domains.length > 0" class="badge ok">{{ t('publish.published') }}</span>
-                <span v-else class="badge" :class="c.recommended_mode === 'direct' ? 'ok' : 'info'">
-                  {{ c.recommended_mode === 'direct' ? 'Direct' : 'Relay' }}
-                </span>
+          <template v-if="sourceTab === 'docker' && containers.length > 0">
+            <div v-if="unpublishedContainers.length > 0" class="container-pick-list">
+              <button
+                v-for="c in unpublishedContainers"
+                :key="c.id"
+                type="button"
+                class="pick-item"
+                :class="{ selected: selectedContainer === c.name }"
+                @click="pickContainer(c)"
+              >
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;">
+                  <strong style="font-size:14px;">{{ c.name }}</strong>
+                  <span class="badge" :class="c.recommended_mode === 'direct' ? 'ok' : 'info'">
+                    {{ c.recommended_mode === 'direct' ? 'Direct' : 'Relay' }}
+                  </span>
+                </div>
+                <span class="tnum pick-sub">{{ c.recommended_host }}:{{ c.recommended_port }}</span>
+              </button>
+            </div>
+            <div v-else class="field-hint">{{ t('publish.allPublished') }}</div>
+
+            <div v-if="publishedContainers.length > 0" class="published-group">
+              <button type="button" class="published-toggle" :aria-expanded="showPublished" @click="showPublished = !showPublished">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true" :style="{ transform: showPublished ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }">
+                  <path d="m9 6 6 6-6 6"/>
+                </svg>
+                {{ t('publish.publishedGroup', { count: publishedContainers.length }) }}
+              </button>
+              <div v-if="showPublished" class="container-pick-list">
+                <button
+                  v-for="c in publishedContainers"
+                  :key="c.id"
+                  type="button"
+                  class="pick-item published"
+                  :class="{ selected: selectedContainer === c.name }"
+                  @click="pickContainer(c)"
+                >
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;">
+                    <strong style="font-size:14px;">{{ c.name }}</strong>
+                    <span class="badge ok">{{ t('publish.published') }}</span>
+                  </div>
+                  <span class="tnum pick-sub" :title="c.published_domains.join(', ')">{{ c.published_domains.join(', ') }}</span>
+                </button>
               </div>
-              <span class="tnum pick-sub" :title="c.published_domains.join(', ')">
-                {{ c.published_domains.length > 0 ? c.published_domains.join(', ') : `${c.recommended_host}:${c.recommended_port}` }}
-              </span>
+            </div>
+          </template>
+
+          <div v-if="selectedPublishedDomains.length > 0" class="republish-note">
+            <span>{{ t('publish.alreadyPublished', { domains: selectedPublishedDomains.join(', ') }) }}</span>
+            <button type="button" class="btn-outline btn-sm" @click="emit('inspect-domain', selectedPublishedDomains[0])">
+              {{ t('publish.viewExisting') }}
             </button>
           </div>
 
@@ -406,7 +448,7 @@ async function handlePublish() {
           <div style="display:flex;gap:10px;">
             <button type="button" class="btn-outline" @click="emit('close')">{{ t('common.cancel') }}</button>
             <button type="submit" class="btn-primary" :disabled="loading">
-              {{ loading ? t('publish.submitting') : t('publish.submit') }}
+              {{ loading ? t('publish.submitting') : selectedPublishedDomains.length > 0 ? t('publish.submitAddDomain') : t('publish.submit') }}
             </button>
           </div>
         </div>

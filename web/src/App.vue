@@ -306,6 +306,13 @@ function routeBusyText(r: RouteRecord): string {
   return ''
 }
 
+function inspectDomain(domain: string) {
+  const r = dash.value?.routes.find((x) => x.full_domain === domain)
+  if (!r) return
+  showPublishModal.value = false
+  inspectedRouteId.value = r.id
+}
+
 async function deleteRouteOptimistic(id: string, domain: string, deleteDNS: boolean) {
   deletingRoutes.value[id] = true
   try {
@@ -1280,6 +1287,7 @@ function copyText(text: string, label: string) {
       @close="showPublishModal = false"
       @published="(m) => { showPublishModal = false; refreshDashboard(); showToast(m) }"
       @open-dns="showPublishModal = false; showDNSModal = true"
+      @inspect-domain="inspectDomain"
       @open-node="showPublishModal = false; showNodeModal = true"
     />
 
