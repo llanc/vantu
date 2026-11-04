@@ -8,9 +8,13 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/llanc/vantu/internal/caddy"
 	"github.com/llanc/vantu/internal/config"
@@ -78,6 +82,12 @@ type PublishInput struct {
 	MaxBodyMB      int    `json:"max_body_mb,omitempty"`
 	ReadTimeoutSec int    `json:"read_timeout_sec,omitempty"`
 	Note           string `json:"note,omitempty"`
+
+	// Optional HTTP Basic Auth enforced at the edge. An empty user disables it.
+	BasicAuthUser     string `json:"basic_auth_user,omitempty"`
+	BasicAuthPassword string `json:"basic_auth_password,omitempty"`
+	// BasicAuthHash carries an existing bcrypt hash when re-applying a route.
+	BasicAuthHash string `json:"-"`
 
 	SkipLocalCheck bool          `json:"skip_local_check,omitempty"`
 	DryRun         bool          `json:"dry_run,omitempty"`
@@ -298,12 +308,46 @@ func (s *Service) ListContainers(ctx context.Context) ([]discovery.DiscoveredCon
 	}
 	routes, _ := s.store.ListRoutes(ctx)
 	pubMap := make(map[string][]string)
+	var manual []store.Route
 	for _, r := range routes {
 		if r.SourceType == "docker" && r.ContainerName != "" {
 			pubMap[r.ContainerName] = append(pubMap[r.ContainerName], r.FullDomain)
+		} else if r.SourceType == "manual" {
+			manual = append(manual, r)
 		}
 	}
-	return s.docker.ListContainers(ctx, pubMap)
+	list, ok, err := s.docker.ListContainers(ctx, pubMap)
+	if err != nil || len(manual) == 0 {
+		return list, ok, err
+	}
+	// A manual IP:port route that lands on a container's port publishes that container too.
+	for i := range list {
+		for _, r := range manual {
+			if containerServesTarget(list[i], r.LocalTargetHost, r.LocalTargetPort) && !slices.Contains(list[i].PublishedDomains, r.FullDomain) {
+				list[i].PublishedDomains = append(list[i].PublishedDomains, r.FullDomain)
+			}
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		return len(list[i].PublishedDomains) == 0 && len(list[j].PublishedDomains) > 0
+	})
+	return list, ok, nil
+}
+
+func containerServesTarget(c discovery.DiscoveredContainer, host string, port int) bool {
+	loopback := host == "127.0.0.1" || host == "localhost" || host == "0.0.0.0" || host == "::1"
+	for _, p := range c.Ports {
+		if p.PublicPort == port && (loopback || p.BindIP == host || p.TargetHost == host) {
+			return true
+		}
+		if p.TargetPort == port && p.TargetHost == host {
+			return true
+		}
+		if p.PrivatePort == port && c.BridgeIP != "" && host == c.BridgeIP {
+			return true
+		}
+	}
+	return false
 }
 
 // AddDNSProvider validates credentials against the remote DNS API, encrypts secrets, and syncs root zones.
@@ -658,7 +702,7 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 	}
 
 	caddySpec := s.routeToCaddySpec(rt)
-	caddyPayload := caddy.BuildRoutePayload(caddySpec)
+	caddyPayload := caddy.PreviewRoutePayload(caddySpec)
 	cliCmd := buildCLICommand(rt)
 
 	if in.DryRun {
@@ -726,6 +770,13 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 	if err := s.store.UpsertRoute(ctx, rt); err != nil {
 		return nil, err
 	}
+	// Let consoles render the route card while DNS, Caddy and probing are still running.
+	notifyRoutes := func() {
+		if s.hub != nil {
+			s.hub.Publish("routes_updated", map[string]any{"route_id": rt.ID})
+		}
+	}
+	notifyRoutes()
 
 	// Step 2: Upsert DNS A Record
 	emitStep("dns_upsert", "配置 DNS 解析", "running", fmt.Sprintf("%s -> %s ...", rt.FullDomain, node.PublicIPv4))
@@ -753,6 +804,7 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 		rt.LifecycleState = "error"
 		rt.LastError = err.Error()
 		_ = s.store.UpsertRoute(ctx, rt)
+		notifyRoutes()
 		if errors.Is(err, dns.ErrExternalRecordConflict) {
 			return nil, newAppErr("DNS_CONFLICT", err.Error(), "勾选覆盖已有同名 DNS 记录或在 CLI 添加 --adopt-dns", 409, 4)
 		}
@@ -780,6 +832,7 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 			rt.LastError = err.Error()
 			_ = s.store.UpsertRoute(ctx, rt)
 		}
+		notifyRoutes()
 		return nil, newAppErr("EDGE_UNREACHABLE",
 			fmt.Sprintf("推送边缘节点 %s Caddy 配置失败：%v", node.Name, err),
 			"已回滚本次新增 DNS 记录；请检查边缘节点 Tailscale 与 Caddy 容器状态", 502, 5)
@@ -788,6 +841,7 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 	rt.LifecycleState = "issuing_tls"
 	rt.LastError = ""
 	_ = s.store.UpsertRoute(ctx, rt)
+	notifyRoutes()
 	emitStep("caddy_push", "推送 Caddy 路由", "done", fmt.Sprintf("%s (@id=%s%s)", node.Name, caddy.RouteIDPrefix, rt.ID))
 
 	// Step 4: Probe Verification
@@ -866,7 +920,7 @@ func (s *Service) GetRouteDetail(ctx context.Context, idOrDomain string) (*Route
 	return &RouteDetail{
 		Route:        *rt,
 		History:      hist,
-		CaddyPayload: caddy.BuildRoutePayload(spec),
+		CaddyPayload: caddy.PreviewRoutePayload(spec),
 		CLICommand:   buildCLICommand(*rt),
 	}, nil
 }
@@ -1003,6 +1057,8 @@ func (s *Service) RetryRoute(ctx context.Context, idOrDomain, actor string) (*st
 		MaxBodyMB:      rt.MaxBodyMB,
 		ReadTimeoutSec: rt.ReadTimeoutSec,
 		Note:           rt.Note,
+		BasicAuthUser:  rt.BasicAuthUser,
+		BasicAuthHash:  rt.BasicAuthHash,
 		SkipLocalCheck: true,
 	}, actor)
 	if err != nil {
@@ -1347,6 +1403,11 @@ func (s *Service) prepareRoutePlan(ctx context.Context, in PublishInput) (store.
 		proxied = false
 	}
 
+	authUser, authHash, err := resolveBasicAuth(in, existing)
+	if err != nil {
+		return store.Route{}, nil, nil, err
+	}
+
 	rt := store.Route{
 		ID:               routeID,
 		Subdomain:        sub,
@@ -1378,10 +1439,95 @@ func (s *Service) prepareRoutePlan(ctx context.Context, in PublishInput) (store.
 		OriginCertDays:   originCertDays,
 		PublicLatencyMs:  publicLatencyMs,
 		Note:             strings.TrimSpace(in.Note),
+		BasicAuthUser:    authUser,
+		BasicAuthHash:    authHash,
 		CreatedAt:        createdAt,
 	}
 
 	return rt, zone, node, nil
+}
+
+const minBasicAuthPassword = 6
+
+// resolveBasicAuth validates the requested credentials and returns the user and bcrypt hash to store.
+// A user without a password keeps the existing hash when the user name is unchanged.
+func resolveBasicAuth(in PublishInput, existing *store.Route) (string, string, error) {
+	user := strings.TrimSpace(in.BasicAuthUser)
+	if user == "" {
+		return "", "", nil
+	}
+	if strings.ContainsAny(user, ": ") {
+		return "", "", newAppErr("VALIDATION_ERROR", "访问认证用户名不能包含冒号或空格", "", 400, 2)
+	}
+	switch {
+	case in.BasicAuthPassword != "":
+		if len(in.BasicAuthPassword) < minBasicAuthPassword {
+			return "", "", newAppErr("VALIDATION_ERROR", "访问认证密码长度至少需要 6 位", "", 400, 2)
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(in.BasicAuthPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return "", "", err
+		}
+		return user, string(hash), nil
+	case in.BasicAuthHash != "":
+		return user, in.BasicAuthHash, nil
+	case existing != nil && existing.BasicAuthUser == user && existing.BasicAuthHash != "":
+		return user, existing.BasicAuthHash, nil
+	default:
+		return "", "", newAppErr("VALIDATION_ERROR", "开启访问认证时必须设置密码", "Web 端填写密码，或在 CLI 添加 --auth-password", 400, 2)
+	}
+}
+
+// SetRouteAuth enables, changes or (with an empty user) removes HTTP Basic Auth on an existing route.
+func (s *Service) SetRouteAuth(ctx context.Context, idOrDomain, user, password, actor string) (*store.Route, error) {
+	rt, err := s.store.GetRoute(ctx, idOrDomain)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, newAppErr("NOT_FOUND", fmt.Sprintf("未找到路由 %q", idOrDomain), "", 404, 2)
+	}
+	if err != nil {
+		return nil, err
+	}
+	authUser, authHash, err := resolveBasicAuth(PublishInput{BasicAuthUser: user, BasicAuthPassword: password}, rt)
+	if err != nil {
+		return nil, err
+	}
+	rt.BasicAuthUser, rt.BasicAuthHash = authUser, authHash
+
+	if rt.Enabled {
+		node, err := s.store.GetEdgeNode(ctx, rt.EdgeNodeID)
+		if err != nil {
+			return nil, err
+		}
+		secret, err := s.vault.Decrypt(node.AuthSecretEnc)
+		if err != nil {
+			return nil, err
+		}
+		if err := caddy.NewClient(node.CaddyAdminURL, secret).UpsertRoute(ctx, s.routeToCaddySpec(*rt)); err != nil {
+			return nil, newAppErr("EDGE_UNREACHABLE",
+				fmt.Sprintf("推送边缘节点 %s Caddy 配置失败：%v", node.Name, err),
+				"请检查边缘节点 Tailscale 与 Caddy 容器状态", 502, 5)
+		}
+	}
+	if err := s.store.UpsertRoute(ctx, *rt); err != nil {
+		return nil, err
+	}
+
+	msg := fmt.Sprintf("已为 %s 开启访问认证（用户 %s）", rt.FullDomain, authUser)
+	if authUser == "" {
+		msg = fmt.Sprintf("已关闭 %s 的访问认证", rt.FullDomain)
+	}
+	s.store.AppendAudit(ctx, store.AuditEvent{
+		Severity:    "info",
+		Category:    "route",
+		TargetID:    rt.ID,
+		TargetLabel: rt.FullDomain,
+		Message:     msg,
+		Actor:       actor,
+	})
+	if s.hub != nil {
+		s.hub.Publish("routes_updated", map[string]any{"route_id": rt.ID})
+	}
+	return rt, nil
 }
 
 func (s *Service) resolveDomainAndZone(ctx context.Context, rawDomain, rawSub, zoneID string) (*store.DNSZone, string, string, error) {
@@ -1648,6 +1794,8 @@ func (s *Service) routeToCaddySpec(rt store.Route) caddy.RouteSpec {
 		MaxBodyMB:      rt.MaxBodyMB,
 		ReadTimeoutSec: rt.ReadTimeoutSec,
 		RelayKeyHMAC:   hmacKey,
+		BasicAuthUser:  rt.BasicAuthUser,
+		BasicAuthHash:  rt.BasicAuthHash,
 	}
 }
 
@@ -1696,6 +1844,9 @@ func buildCLICommand(rt store.Route) string {
 	}
 	if rt.DNSProxied {
 		parts = append(parts, "--proxied")
+	}
+	if rt.BasicAuthUser != "" {
+		parts = append(parts, fmt.Sprintf("--auth-user %s --auth-password <password>", rt.BasicAuthUser))
 	}
 	return strings.Join(parts, " ")
 }

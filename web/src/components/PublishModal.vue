@@ -43,6 +43,14 @@ const dnsProxied = ref(false)
 const adoptDNS = ref(false)
 const skipLocalCheck = ref(false)
 const showCLI = ref(false)
+const authEnabled = ref(false)
+const authUser = ref('')
+const authPassword = ref('')
+
+// Unpublished containers first; published ones stay selectable for extra domains.
+const sortedContainers = computed(() =>
+  [...props.containers].sort((a, b) => Number(a.published_domains.length > 0) - Number(b.published_domains.length > 0))
+)
 
 const dryRunCLI = ref('')
 const loading = ref(false)
@@ -82,8 +90,8 @@ onMounted(() => {
 
   if (props.initialContainer) {
     pickContainer(props.initialContainer)
-  } else if (props.containers.length > 0) {
-    pickContainer(props.containers[0])
+  } else if (sortedContainers.value.length > 0) {
+    pickContainer(sortedContainers.value[0])
   } else {
     sourceTab.value = 'manual'
     subdomain.value = 'app'
@@ -112,10 +120,11 @@ const computedCLICommand = computed(() => {
   }
   if (forwardMode.value !== 'auto') parts.push(`--mode ${forwardMode.value}`)
   if (dnsProxied.value && selectedZoneObj.value?.supports_proxy) parts.push('--proxied')
+  if (authEnabled.value && authUser.value.trim()) parts.push(`--auth-user ${authUser.value.trim()} --auth-password <password>`)
   return dryRunCLI.value || parts.join(' ')
 })
 
-watch([sourceTab, selectedContainer, manualHost, manualPort, manualScheme, subdomain, zoneID, nodeID, preset, forwardMode, dnsProxied], () => {
+watch([sourceTab, selectedContainer, manualHost, manualPort, manualScheme, subdomain, zoneID, nodeID, preset, forwardMode, dnsProxied, authEnabled, authUser], () => {
   dryRunCLI.value = ''
 })
 
@@ -137,18 +146,36 @@ function buildPayload(dryRun: boolean) {
     preset: preset.value,
     dns_proxied: selectedZoneObj.value?.supports_proxy ? dnsProxied.value : false,
     adopt_dns: adoptDNS.value,
+    basic_auth_user: authEnabled.value ? authUser.value.trim() : undefined,
+    basic_auth_password: authEnabled.value ? authPassword.value : undefined,
     skip_local_check: skipLocalCheck.value,
     dry_run: dryRun,
   }
 }
 
+// Once the edge has the route, the remaining TLS/probe wait is shown on the route card instead.
+let closedEarly = false
+watch(
+  () => props.liveSteps.find((s) => s.step === 'caddy_push' && s.domain === fullDomainPreview.value)?.status,
+  (status) => {
+    if (loading.value && status === 'done' && !closedEarly) {
+      closedEarly = true
+      emit('published', t('publish.configuring', { domain: fullDomainPreview.value }))
+    }
+  }
+)
+
 async function handlePublish() {
   errMsg.value = ''
   conflictWarning.value = false
+  if (authEnabled.value && (!authUser.value.trim() || authPassword.value.length < 6)) {
+    errMsg.value = t('publish.authInvalid')
+    return
+  }
   loading.value = true
   try {
     const res = await api.publishRoute(buildPayload(false))
-    emit('published', t('publish.done', { domain: res.route.full_domain }))
+    if (!closedEarly) emit('published', t('publish.done', { domain: res.route.full_domain }))
   } catch (err) {
     if (err instanceof APIRequestError) {
       errMsg.value = `${err.message}${err.suggestion ? ' — ' + err.suggestion : ''}`
@@ -243,21 +270,22 @@ async function handlePublish() {
 
           <div v-if="sourceTab === 'docker' && containers.length > 0" class="container-pick-list">
             <button
-              v-for="c in containers"
+              v-for="c in sortedContainers"
               :key="c.id"
               type="button"
               class="pick-item"
-              :class="{ selected: selectedContainer === c.name }"
+              :class="{ selected: selectedContainer === c.name, published: c.published_domains.length > 0 }"
               @click="pickContainer(c)"
             >
               <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;">
                 <strong style="font-size:14px;">{{ c.name }}</strong>
-                <span class="badge" :class="c.recommended_mode === 'direct' ? 'ok' : 'info'">
+                <span v-if="c.published_domains.length > 0" class="badge ok">{{ t('publish.published') }}</span>
+                <span v-else class="badge" :class="c.recommended_mode === 'direct' ? 'ok' : 'info'">
                   {{ c.recommended_mode === 'direct' ? 'Direct' : 'Relay' }}
                 </span>
               </div>
-              <span class="tnum" style="font-size:12px;color:var(--text-secondary);">
-                {{ c.recommended_host }}:{{ c.recommended_port }}
+              <span class="tnum pick-sub" :title="c.published_domains.join(', ')">
+                {{ c.published_domains.length > 0 ? c.published_domains.join(', ') : `${c.recommended_host}:${c.recommended_port}` }}
               </span>
             </button>
           </div>
@@ -330,6 +358,19 @@ async function handlePublish() {
               <option value="direct">{{ t('publish.modeDirect') }}</option>
               <option value="relay">{{ t('publish.modeRelay') }}</option>
             </select>
+          </div>
+        </div>
+
+        <!-- 5. Access Authentication -->
+        <div class="field">
+          <label style="display:inline-flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;">
+            <input v-model="authEnabled" type="checkbox" />
+            {{ t('publish.auth') }}
+            <span style="font-size:13px;color:var(--text-muted);">{{ t('publish.authDesc') }}</span>
+          </label>
+          <div v-if="authEnabled" class="auth-grid">
+            <input v-model="authUser" class="input" type="text" autocomplete="off" :placeholder="t('route.authUser')" :aria-label="t('route.authUser')" />
+            <input v-model="authPassword" class="input" type="password" autocomplete="new-password" :placeholder="t('route.authPassword')" :aria-label="t('route.authPassword')" />
           </div>
         </div>
 

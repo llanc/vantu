@@ -51,6 +51,9 @@ const showDNSModal = ref(false)
 const showCmdPalette = ref(false)
 const inspectedRouteId = ref<string | null>(null)
 const proxyBusyMap = ref<Record<string, boolean>>({})
+// Latest publish step per domain (from SSE) and routes whose deletion is in flight.
+const routeLiveStep = ref<Record<string, StepProgress>>({})
+const deletingRoutes = ref<Record<string, boolean>>({})
 
 const newTokenName = ref('cli-token')
 const newTokenScope = ref<'admin' | 'readonly'>('admin')
@@ -123,6 +126,13 @@ function connectSSE() {
     try {
       const parsed = JSON.parse(ev.data)
       const d = parsed.data as StepProgress
+      if (d.domain) {
+        if (d.step === 'probe_verify' && d.status !== 'running') {
+          delete routeLiveStep.value[d.domain]
+        } else {
+          routeLiveStep.value[d.domain] = d
+        }
+      }
       const idx = livePublishSteps.value.findIndex((s) => s.step === d.step)
       if (idx >= 0) {
         livePublishSteps.value[idx] = d
@@ -287,8 +297,33 @@ function dotClass(state: string) {
   }
 }
 
+/** Transient label shown while a route is being configured or removed; empty when idle. */
+function routeBusyText(r: RouteRecord): string {
+  if (deletingRoutes.value[r.id]) return t('state.deleting')
+  const step = routeLiveStep.value[r.full_domain]
+  if (step && step.status === 'running') return t('state.configuringStep', { step: step.title })
+  if (r.lifecycle_state === 'provisioning' || r.lifecycle_state === 'planned') return t('state.configuring')
+  return ''
+}
+
+async function deleteRouteOptimistic(id: string, domain: string, deleteDNS: boolean) {
+  deletingRoutes.value[id] = true
+  try {
+    await api.deleteRoute(id, deleteDNS)
+    await refreshDashboard()
+    showToast(t('common.deletedName', { name: domain }))
+  } catch (err) {
+    showToast((err as Error).message)
+  } finally {
+    delete deletingRoutes.value[id]
+  }
+}
+
 function stateBadge(state: string): { label: string; cls: string } {
   switch (state) {
+    case 'provisioning':
+    case 'planned':
+      return { label: t('state.configuring'), cls: 'info' }
     case 'active':
       return { label: t('state.active'), cls: 'ok' }
     case 'issuing_tls':
@@ -538,6 +573,18 @@ function copyText(text: string, label: string) {
             <span class="cmd-label">{{ t('nav.search') }}</span>
             <span class="kbd">⌘K</span>
           </button>
+          <a
+            class="icon-btn"
+            href="https://github.com/llanc/vantu"
+            target="_blank"
+            rel="noopener"
+            :aria-label="t('common.github')"
+            :title="t('common.github')"
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.37-3.87-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/>
+            </svg>
+          </a>
           <button
             type="button"
             class="icon-btn lang-btn"
@@ -709,13 +756,17 @@ function copyText(text: string, label: string) {
           </div>
 
           <!-- Cards Grid (Dynamic 3 / 4 / 5 Hops per Route!) -->
-          <div v-if="layoutMode === 'cards'" class="routes-grid">
+          <TransitionGroup v-if="layoutMode === 'cards'" name="route" tag="div" class="routes-grid">
             <article
               v-for="r in filteredRoutes"
               :key="r.id"
               class="route-card"
-              :class="{ broken: r.lifecycle_state === 'degraded' || r.lifecycle_state === 'error' }"
-              @click="inspectedRouteId = r.id"
+              :class="{
+                broken: r.lifecycle_state === 'degraded' || r.lifecycle_state === 'error',
+                busy: !!routeBusyText(r),
+                deleting: !!deletingRoutes[r.id],
+              }"
+              @click="!deletingRoutes[r.id] && (inspectedRouteId = r.id)"
             >
               <div class="route-head">
                 <div>
@@ -730,7 +781,10 @@ function copyText(text: string, label: string) {
                     >
                       {{ r.full_domain }}
                     </a>
-                    <span class="badge" :class="stateBadge(r.lifecycle_state).cls">
+                    <span v-if="routeBusyText(r)" class="badge info busy-badge">
+                      <span class="spinner" aria-hidden="true"></span>{{ routeBusyText(r) }}
+                    </span>
+                    <span v-else class="badge" :class="stateBadge(r.lifecycle_state).cls">
                       {{ stateBadge(r.lifecycle_state).label }}
                     </span>
                   </div>
@@ -746,6 +800,12 @@ function copyText(text: string, label: string) {
                     </span>
                     <span class="badge">{{ r.edge_node_name }}</span>
                     <span v-if="r.preset !== 'web'" class="badge">{{ r.preset.toUpperCase() }}</span>
+                    <span v-if="r.basic_auth_user" class="badge auth-badge" :title="t('route.authUserIs', { user: r.basic_auth_user })">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                        <rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+                      </svg>
+                      {{ t('route.authBadge') }}
+                    </span>
                   </div>
                 </div>
 
@@ -815,7 +875,7 @@ function copyText(text: string, label: string) {
                 </div>
               </div>
             </article>
-          </div>
+          </TransitionGroup>
 
           <!-- Table View -->
           <div v-else class="swiss-table-wrap">
@@ -831,21 +891,32 @@ function copyText(text: string, label: string) {
                   <th>{{ t('dash.colStatus') }}</th>
                 </tr>
               </thead>
-              <tbody>
-                <tr v-for="r in filteredRoutes" :key="r.id" @click="inspectedRouteId = r.id">
-                  <td><strong>{{ r.full_domain }}</strong></td>
+              <TransitionGroup name="row" tag="tbody">
+                <tr
+                  v-for="r in filteredRoutes"
+                  :key="r.id"
+                  :class="{ deleting: !!deletingRoutes[r.id] }"
+                  @click="!deletingRoutes[r.id] && (inspectedRouteId = r.id)"
+                >
+                  <td>
+                    <strong>{{ r.full_domain }}</strong>
+                    <span v-if="r.basic_auth_user" class="badge auth-badge" style="margin-left:6px;">{{ t('route.authBadge') }}</span>
+                  </td>
                   <td class="tnum">{{ r.local_target_host }}:{{ r.local_target_port }}</td>
                   <td>{{ r.forward_mode === 'relay' ? 'Relay' : 'Direct' }}</td>
                   <td class="tnum">{{ r.edge_node_name }}</td>
                   <td class="tnum">{{ r.origin_cert_days >= 0 ? t('dash.days', { n: r.origin_cert_days }) : t('dash.issuing') }}</td>
                   <td>{{ r.dns_proxied ? t('common.on') : t('common.off') }}</td>
                   <td>
-                    <span class="badge" :class="stateBadge(r.lifecycle_state).cls">
+                    <span v-if="routeBusyText(r)" class="badge info busy-badge">
+                      <span class="spinner" aria-hidden="true"></span>{{ routeBusyText(r) }}
+                    </span>
+                    <span v-else class="badge" :class="stateBadge(r.lifecycle_state).cls">
                       {{ stateBadge(r.lifecycle_state).label }}
                     </span>
                   </td>
                 </tr>
-              </tbody>
+              </TransitionGroup>
             </table>
           </div>
         </template>
@@ -1216,6 +1287,7 @@ function copyText(text: string, label: string) {
       :route-id="inspectedRouteId"
       @close="inspectedRouteId = null"
       @updated="(m) => { refreshDashboard(); showToast(m) }"
+      @delete="deleteRouteOptimistic"
     />
 
     <NodeModal

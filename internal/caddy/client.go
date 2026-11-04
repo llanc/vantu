@@ -3,6 +3,7 @@ package caddy
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,7 +28,11 @@ type RouteSpec struct {
 	MaxBodyMB      int
 	ReadTimeoutSec int
 	RelayKeyHMAC   string
+	BasicAuthUser  string
+	BasicAuthHash  string // bcrypt
 }
+
+const hiddenHash = "<hidden>"
 
 // BootstrapBundle contains ready-to-deploy edge node configuration files.
 type BootstrapBundle struct {
@@ -251,18 +256,42 @@ func BuildRoutePayload(spec RouteSpec) map[string]any {
 		revProxy["flush_interval"] = -1
 	}
 
+	reqHeaders := map[string]any{}
 	if spec.ForwardMode == "relay" && spec.RelayKeyHMAC != "" {
-		revProxy["headers"] = map[string]any{
-			"request": map[string]any{
-				"set": map[string][]string{
-					"X-Vantu-Route":     {spec.RouteID},
-					"X-Vantu-Relay-Key": {spec.RelayKeyHMAC},
-				},
-			},
+		reqHeaders["set"] = map[string][]string{
+			"X-Vantu-Route":     {spec.RouteID},
+			"X-Vantu-Relay-Key": {spec.RelayKeyHMAC},
 		}
 	}
+	basicAuth := spec.BasicAuthUser != "" && spec.BasicAuthHash != ""
+	if basicAuth {
+		// Keep the visitor's Basic credentials away from the upstream application.
+		reqHeaders["delete"] = []string{"Authorization"}
+	}
+	if len(reqHeaders) > 0 {
+		revProxy["headers"] = map[string]any{"request": reqHeaders}
+	}
 
-	handles := make([]any, 0, 2)
+	handles := make([]any, 0, 3)
+	if basicAuth {
+		// Caddy accepts base64-wrapped hashes on every 2.x release.
+		password := base64.StdEncoding.EncodeToString([]byte(spec.BasicAuthHash))
+		if spec.BasicAuthHash == hiddenHash {
+			password = hiddenHash
+		}
+		handles = append(handles, map[string]any{
+			"handler": "authentication",
+			"providers": map[string]any{
+				"http_basic": map[string]any{
+					"accounts": []map[string]string{
+						{"username": spec.BasicAuthUser, "password": password},
+					},
+					"hash":  map[string]string{"algorithm": "bcrypt"},
+					"realm": spec.FullDomain,
+				},
+			},
+		})
+	}
 	if spec.MaxBodyMB > 0 {
 		handles = append(handles, map[string]any{
 			"handler":  "request_body",
@@ -279,6 +308,14 @@ func BuildRoutePayload(spec RouteSpec) map[string]any {
 		"handle":   handles,
 		"terminal": true,
 	}
+}
+
+// PreviewRoutePayload is BuildRoutePayload with the Basic Auth hash masked, for display only.
+func PreviewRoutePayload(spec RouteSpec) map[string]any {
+	if spec.BasicAuthHash != "" {
+		spec.BasicAuthHash = hiddenHash
+	}
+	return BuildRoutePayload(spec)
 }
 
 // GenerateBootstrapBundle creates zero-agent docker-compose.yml and bootstrap.json with Tailscale + Bearer Secret guard.

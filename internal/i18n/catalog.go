@@ -194,4 +194,11 @@ var catalog = map[string]string{
 	"节点未配置公网 IP":                      "The node has no public IP configured",
 	"TCP 连接 %s 失败 (%s)":               "TCP connection to %s failed (%s)",
 	"源站 TLS 证书已过期":                    "The origin TLS certificate has expired",
+
+	"访问认证用户名不能包含冒号或空格":                    "The access username must not contain colons or spaces",
+	"访问认证密码长度至少需要 6 位":                    "The access password must be at least 6 characters",
+	"开启访问认证时必须设置密码":                       "A password is required to enable access authentication",
+	"Web 端填写密码，或在 CLI 添加 --auth-password": "Enter a password in the console, or add --auth-password in the CLI",
+	"已为 %s 开启访问认证（用户 %s）":                 "Enabled access authentication for %s (user %s)",
+	"已关闭 %s 的访问认证":                        "Disabled access authentication for %s",
 }

@@ -10,7 +10,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'updated', msg: string): void
+  (e: 'delete', id: string, domain: string, deleteDNS: boolean): void
 }>()
+
+const authEditing = ref(false)
+const authUser = ref('')
+const authPassword = ref('')
 
 const detail = ref<RouteDetail | null>(null)
 const loading = ref(false)
@@ -24,6 +29,7 @@ async function loadDetail() {
   loading.value = true
   errMsg.value = ''
   confirmDelete.value = false
+  authEditing.value = false
   try {
     detail.value = await api.getRouteDetail(props.routeId)
   } catch (err) {
@@ -108,20 +114,40 @@ async function toggleEnabled() {
   }
 }
 
-async function executeDelete() {
+function executeDelete() {
+  if (!detail.value) return
+  emit('delete', detail.value.route.id, detail.value.route.full_domain, deleteDNS.value)
+  emit('close')
+}
+
+function startAuthEdit() {
+  authUser.value = detail.value?.route.basic_auth_user || ''
+  authPassword.value = ''
+  authEditing.value = true
+}
+
+async function applyAuth(user: string, password: string) {
   if (!detail.value) return
   actionBusy.value = true
   errMsg.value = ''
   try {
-    const dom = detail.value.route.full_domain
-    await api.deleteRoute(detail.value.route.id, deleteDNS.value)
-    emit('updated', t('common.deletedName', { name: dom }))
-    emit('close')
+    const rt = await api.setRouteAuth(detail.value.route.id, user, password)
+    detail.value = await api.getRouteDetail(rt.id)
+    authEditing.value = false
+    emit('updated', t(user ? 'route.authOnDone' : 'route.authOffDone', { domain: rt.full_domain }))
   } catch (err) {
     errMsg.value = err instanceof APIRequestError ? err.message : (err as Error).message
   } finally {
     actionBusy.value = false
   }
+}
+
+function saveAuth() {
+  if (!authUser.value.trim() || authPassword.value.length < 6) {
+    errMsg.value = t('publish.authInvalid')
+    return
+  }
+  applyAuth(authUser.value.trim(), authPassword.value)
 }
 </script>
 
@@ -226,6 +252,38 @@ async function executeDelete() {
           </div>
         </div>
 
+        <!-- Access Authentication -->
+        <div class="field">
+          <span class="field-label">{{ t('route.authTitle') }}</span>
+          <div class="auth-panel">
+            <div v-if="!authEditing" class="auth-panel-row">
+              <span style="display:inline-flex;align-items:center;gap:8px;font-size:14px;">
+                <span class="badge" :class="detail.route.basic_auth_user ? 'ok' : ''">
+                  {{ detail.route.basic_auth_user ? t('common.on') : t('common.off') }}
+                </span>
+                <span v-if="detail.route.basic_auth_user" class="tnum">{{ t('route.authUserIs', { user: detail.route.basic_auth_user }) }}</span>
+                <span v-else style="color:var(--text-secondary);">{{ t('route.authHint') }}</span>
+              </span>
+              <span style="display:flex;gap:8px;">
+                <button type="button" class="btn-outline btn-sm" :disabled="actionBusy" @click="startAuthEdit">
+                  {{ detail.route.basic_auth_user ? t('route.authChange') : t('route.authEnable') }}
+                </button>
+                <button v-if="detail.route.basic_auth_user" type="button" class="btn-outline btn-sm" :disabled="actionBusy" @click="applyAuth('', '')">
+                  {{ t('route.authDisable') }}
+                </button>
+              </span>
+            </div>
+            <form v-else class="auth-grid" @submit.prevent="saveAuth">
+              <input v-model="authUser" class="input" type="text" autocomplete="off" :placeholder="t('route.authUser')" :aria-label="t('route.authUser')" />
+              <input v-model="authPassword" class="input" type="password" autocomplete="new-password" :placeholder="t('route.authPassword')" :aria-label="t('route.authPassword')" />
+              <span style="display:flex;gap:8px;grid-column:1 / -1;">
+                <button type="submit" class="btn-primary btn-sm" :disabled="actionBusy">{{ t('dnsModal.save') }}</button>
+                <button type="button" class="btn-outline btn-sm" @click="authEditing = false">{{ t('common.cancel') }}</button>
+              </span>
+            </form>
+          </div>
+        </div>
+
         <!-- Uptime History Bars -->
         <div class="field">
           <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -264,7 +322,7 @@ async function executeDelete() {
             {{ t('inspect.deleteDNS') }}
           </label>
           <div style="display:flex;gap:8px;">
-            <button type="button" class="btn-danger" :disabled="actionBusy" @click="executeDelete">{{ t('inspect.doDelete') }}</button>
+            <button type="button" class="btn-danger" @click="executeDelete">{{ t('inspect.doDelete') }}</button>
             <button type="button" class="btn-outline" @click="confirmDelete = false">{{ t('common.cancel') }}</button>
           </div>
         </div>

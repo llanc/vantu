@@ -216,8 +216,40 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(created_at DESC);
 `
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	return s.addMissingColumns("routes", map[string]string{
+		"basic_auth_user": "TEXT NOT NULL DEFAULT ''",
+		"basic_auth_hash": "TEXT NOT NULL DEFAULT ''",
+	})
+}
+
+// addMissingColumns upgrades tables created by older releases in place.
+func (s *Store) addMissingColumns(table string, cols map[string]string) error {
+	rows, err := s.db.Query("SELECT name FROM pragma_table_info(?)", table)
+	if err != nil {
+		return err
+	}
+	have := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for name, def := range cols {
+		if have[name] {
+			continue
+		}
+		if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, def)); err != nil {
+			return fmt.Errorf("migrate %s.%s: %w", table, name, err)
+		}
+	}
+	return nil
 }
 
 // --- Admin & Sessions ---
@@ -671,7 +703,8 @@ SELECT r.id, r.subdomain, r.full_domain, r.zone_id, z.zone_name, z.supports_prox
        r.preset, r.max_body_mb, r.read_timeout_sec, r.dns_record_id, r.dns_proxied, r.enabled,
        r.lifecycle_state, r.last_error, r.local_healthy, r.caddy_synced, r.origin_tls_ok,
        r.origin_cert_issuer, r.origin_cert_expires, r.origin_cert_days, r.public_cert_issuer,
-       r.public_http_code, r.public_latency_ms, r.last_probed_at, r.note, r.created_at, r.updated_at
+       r.public_http_code, r.public_latency_ms, r.last_probed_at, r.note, r.created_at, r.updated_at,
+       r.basic_auth_user, r.basic_auth_hash
 FROM routes r
 JOIN dns_zones z ON z.id = r.zone_id
 JOIN edge_nodes n ON n.id = r.edge_node_id
@@ -690,6 +723,7 @@ func scanRoute(scanner interface{ Scan(dest ...any) error }) (Route, error) {
 		&r.LifecycleState, &r.LastError, &locOK, &cadOK, &tlsOK,
 		&r.OriginCertIssuer, &certExp, &r.OriginCertDays, &r.PublicCertIssuer,
 		&r.PublicHTTPCode, &r.PublicLatencyMs, &probed, &r.Note, &r.CreatedAt, &r.UpdatedAt,
+		&r.BasicAuthUser, &r.BasicAuthHash,
 	)
 	if err != nil {
 		return r, err
@@ -747,8 +781,9 @@ INSERT INTO routes (
     preset, max_body_mb, read_timeout_sec, dns_record_id, dns_proxied, enabled,
     lifecycle_state, last_error, local_healthy, caddy_synced, origin_tls_ok,
     origin_cert_issuer, origin_cert_expires, origin_cert_days, public_cert_issuer,
-    public_http_code, public_latency_ms, last_probed_at, note, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    public_http_code, public_latency_ms, last_probed_at, note, created_at, updated_at,
+    basic_auth_user, basic_auth_hash
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     subdomain = excluded.subdomain,
     full_domain = excluded.full_domain,
@@ -773,6 +808,8 @@ ON CONFLICT(id) DO UPDATE SET
     last_error = excluded.last_error,
     caddy_synced = excluded.caddy_synced,
     note = excluded.note,
+    basic_auth_user = excluded.basic_auth_user,
+    basic_auth_hash = excluded.basic_auth_hash,
     updated_at = excluded.updated_at`,
 		r.ID, r.Subdomain, r.FullDomain, r.ZoneID, r.EdgeNodeID,
 		r.SourceType, r.ContainerName, r.ContainerID, r.ForwardMode, r.UpstreamScheme,
@@ -781,6 +818,7 @@ ON CONFLICT(id) DO UPDATE SET
 		r.LifecycleState, r.LastError, boolToInt(r.LocalHealthy), boolToInt(r.CaddySynced), boolToInt(r.OriginTLSOK),
 		r.OriginCertIssuer, r.OriginCertExpires, r.OriginCertDays, r.PublicCertIssuer,
 		r.PublicHTTPCode, r.PublicLatencyMs, r.LastProbedAt, r.Note, now, now,
+		r.BasicAuthUser, r.BasicAuthHash,
 	)
 	return err
 }

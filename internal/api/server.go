@@ -190,6 +190,7 @@ func (s *Server) buildRouter() chi.Router {
 			priv.Get("/routes/{id}", s.handleGetRoute)
 			priv.Post("/routes/{id}/probe", s.handleProbeRoute)
 			priv.Patch("/routes/{id}/proxy", s.handleToggleProxy)
+			priv.Put("/routes/{id}/auth", s.handleSetRouteAuth)
 			priv.Post("/routes/{id}/pause", s.handlePauseRoute)
 			priv.Post("/routes/{id}/resume", s.handleResumeRoute)
 			priv.Post("/routes/{id}/retry", s.handleRetryRoute)
@@ -1144,6 +1145,23 @@ func (s *Server) handleToggleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt, err := s.svc.ToggleProxy(r.Context(), chi.URLParam(r, "id"), body.Proxied, actorFrom(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, rt)
+}
+
+func (s *Server) handleSetRouteAuth(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	rt, err := s.svc.SetRouteAuth(r.Context(), chi.URLParam(r, "id"), body.Username, body.Password, actorFrom(r))
 	if err != nil {
 		writeErr(w, err)
 		return

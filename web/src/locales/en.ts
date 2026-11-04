@@ -12,6 +12,7 @@ const en: Record<keyof typeof zh, string> = {
   'common.setDefault': 'Set as default',
   'common.setDefaultDone': '{name} is now the default',
   'common.deletedName': 'Deleted {name}',
+  'common.github': 'GitHub repository',
   'common.ok': 'OK',
   'common.on': 'On',
   'common.off': 'Off',
@@ -103,6 +104,22 @@ const en: Record<keyof typeof zh, string> = {
   'state.drift': 'Out of sync',
   'state.paused': 'Paused',
   'state.error': 'Error',
+  'state.configuring': 'Configuring',
+  'state.configuringStep': '{step}…',
+  'state.deleting': 'Deleting',
+
+  // route access auth
+  'route.authTitle': 'Access authentication',
+  'route.authBadge': 'Protected',
+  'route.authUser': 'Username',
+  'route.authPassword': 'Password (min. 6 chars)',
+  'route.authUserIs': 'User {user}',
+  'route.authHint': 'Anyone can access it directly',
+  'route.authEnable': 'Enable',
+  'route.authChange': 'Change',
+  'route.authDisable': 'Disable',
+  'route.authOnDone': 'Enabled access authentication for {domain}',
+  'route.authOffDone': 'Disabled access authentication for {domain}',
 
   // topology hops
   'hop.container': 'Container',
@@ -231,6 +248,11 @@ const en: Record<keyof typeof zh, string> = {
   'publish.submitting': 'Publishing...',
   'publish.submit': 'Publish',
   'publish.done': 'Published https://{domain}',
+  'publish.configuring': '{domain} pushed; issuing certificate and checking',
+  'publish.published': 'Published',
+  'publish.auth': 'Access authentication',
+  'publish.authDesc': 'Visitors must enter a username and password',
+  'publish.authInvalid': 'Enter a username and a password of at least 6 characters',
 
   // inspector drawer
   'inspect.label': 'Route details',

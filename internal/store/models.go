@@ -109,8 +109,11 @@ type Route struct {
 	PublicLatencyMs   int        `json:"public_latency_ms"`
 	LastProbedAt      *time.Time `json:"last_probed_at,omitempty"`
 	Note              string     `json:"note"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	BasicAuthUser     string     `json:"basic_auth_user"`
+	BasicAuthHash     string     `json:"-"` // bcrypt; enforced by the edge Caddy route
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type ProbeSample struct {

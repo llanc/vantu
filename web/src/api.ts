@@ -134,6 +134,7 @@ export interface RouteRecord {
   public_latency_ms: number
   last_probed_at?: string
   note: string
+  basic_auth_user: string
 }
 
 export interface ProbeSample {
@@ -230,6 +231,8 @@ export interface PublishPayload {
   dns_proxied?: boolean
   adopt_dns?: boolean
   note?: string
+  basic_auth_user?: string
+  basic_auth_password?: string
   skip_local_check?: boolean
   dry_run?: boolean
 }
@@ -239,6 +242,7 @@ export interface StepProgress {
   title: string
   status: 'planned' | 'running' | 'done' | 'error'
   detail: string
+  domain?: string
 }
 
 export interface PublishResponse {
@@ -348,6 +352,11 @@ export const api = {
     request<RouteRecord>(`/routes/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
   retryRoute: (id: string) =>
     request<RouteRecord>(`/routes/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+  setRouteAuth: (id: string, username: string, password: string) =>
+    request<RouteRecord>(`/routes/${encodeURIComponent(id)}/auth`, {
+      method: 'PUT',
+      body: JSON.stringify({ username, password }),
+    }),
   deleteRoute: (id: string, deleteDNS = true) =>
     request<{ deleted: string }>(`/routes/${encodeURIComponent(id)}?delete_dns=${deleteDNS}`, {
       method: 'DELETE',

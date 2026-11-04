@@ -82,6 +82,10 @@ vantu route inspect api.example.com --probe --json
 vantu route proxy api.example.com --on --json
 vantu route proxy api.example.com --off --json
 
+# Require a username + password from visitors (HTTP Basic Auth at the edge), or remove it
+vantu route auth api.example.com --user alice --password '<password>' --json
+vantu route auth api.example.com --off --json
+
 # Pause / resume / re-push / remove (removal also cleans up DNS)
 vantu route pause api.example.com --json
 vantu route resume api.example.com --json
@@ -173,6 +177,10 @@ vantu route inspect api.example.com --probe --json
 # 开启或关闭 Cloudflare CDN 代理
 vantu route proxy api.example.com --on --json
 vantu route proxy api.example.com --off --json
+
+# 要求访客输入用户名与密码（边缘 HTTP Basic Auth），或关闭
+vantu route auth api.example.com --user alice --password '<密码>' --json
+vantu route auth api.example.com --off --json
 
 # 暂停 / 恢复 / 漂移修复重推 / 彻底下线（含自动清理 DNS 记录）
 vantu route pause api.example.com --json

@@ -18,6 +18,7 @@ const zh = {
   'common.toggleLang': 'Switch to English',
   'common.langShort': 'EN',
   'common.appName': '小凡兔 Vantu',
+  'common.github': 'GitHub 仓库',
 
   // auth
   'auth.loginTitle': '登录',
@@ -101,6 +102,22 @@ const zh = {
   'state.drift': '未同步',
   'state.paused': '已暂停',
   'state.error': '异常',
+  'state.configuring': '正在配置',
+  'state.configuringStep': '正在{step}',
+  'state.deleting': '正在删除',
+
+  // route access auth
+  'route.authTitle': '访问认证',
+  'route.authBadge': '密码保护',
+  'route.authUser': '用户名',
+  'route.authPassword': '密码（至少 6 位）',
+  'route.authUserIs': '用户 {user}',
+  'route.authHint': '任何人都可以直接访问',
+  'route.authEnable': '开启',
+  'route.authChange': '修改',
+  'route.authDisable': '关闭',
+  'route.authOnDone': '已为 {domain} 开启访问认证',
+  'route.authOffDone': '已关闭 {domain} 的访问认证',
 
   // topology hops
   'hop.container': '容器',
@@ -229,6 +246,11 @@ const zh = {
   'publish.submitting': '发布中...',
   'publish.submit': '发布',
   'publish.done': '已发布 https://{domain}',
+  'publish.configuring': '{domain} 已下发，正在签发证书并检测',
+  'publish.published': '已发布',
+  'publish.auth': '访问认证',
+  'publish.authDesc': '访客需输入用户名和密码',
+  'publish.authInvalid': '请填写用户名，且密码至少 6 位',
 
   // inspector drawer
   'inspect.label': '路由详情',

@@ -377,6 +377,8 @@ func newPublishCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&in.SkipLocalCheck, "skip-local-check", false, tr("跳过发布前本地端口连通性探测", "Skip the local port reachability check before publishing"))
 	cmd.Flags().IntVar(&in.MaxBodyMB, "max-body-mb", 0, tr("限制最大上传请求体大小 (MB, 0=不限制)", "Maximum request body size in MB (0 = unlimited)"))
 	cmd.Flags().StringVar(&in.Note, "note", "", tr("路由备注说明", "Route note"))
+	cmd.Flags().StringVar(&in.BasicAuthUser, "auth-user", "", tr("开启访问认证的用户名（访客需输入用户名与密码）", "Username for access authentication (visitors must enter it with the password)"))
+	cmd.Flags().StringVar(&in.BasicAuthPassword, "auth-password", "", tr("访问认证密码（至少 6 位）", "Access authentication password (at least 6 characters)"))
 	return cmd
 }
 
@@ -446,6 +448,9 @@ func newRouteCmd(gf *globalFlags) *cobra.Command {
 			fmt.Printf(tr("边缘节点   : %s (公网 %s, TS %dms, Caddy已同步=%v)\n", "Edge node   : %s (public %s, TS %dms, Caddy synced=%v)\n"), r.EdgeNodeName, r.EdgeNodePublicIP, r.EdgeNodeTSRTTMs, r.CaddySynced)
 			fmt.Printf(tr("源站证书   : %s (剩余 %d 天, OK=%v)\n", "Origin cert : %s (%d days left, OK=%v)\n"), r.OriginCertIssuer, r.OriginCertDays, r.OriginTLSOK)
 			fmt.Printf(tr("公网响应   : HTTP %d (延迟 %dms, CDN=%v, 证书=%s)\n", "Public check: HTTP %d (latency %dms, CDN=%v, cert=%s)\n"), r.PublicHTTPCode, r.PublicLatencyMs, r.DNSProxied, r.PublicCertIssuer)
+			if r.BasicAuthUser != "" {
+				fmt.Printf(tr("访问认证   : 已开启 (用户 %s)\n", "Access auth : on (user %s)\n"), r.BasicAuthUser)
+			}
 			if r.LastError != "" {
 				fmt.Printf(tr("最近告警   : %s\n", "Last alert  : %s\n"), r.LastError)
 			}
@@ -473,6 +478,35 @@ func newRouteCmd(gf *globalFlags) *cobra.Command {
 	}
 	proxyCmd.Flags().BoolVar(&proxyOn, "on", false, tr("开启 Cloudflare CDN 代理", "Enable the Cloudflare CDN proxy"))
 	proxyCmd.Flags().BoolVar(&proxyOff, "off", false, tr("关闭代理，恢复 DNS 直连", "Disable the proxy and switch back to DNS only"))
+
+	var authUser, authPassword string
+	var authOff bool
+	authCmd := &cobra.Command{
+		Use:   "auth <domain-or-id>",
+		Short: tr("为路由设置或关闭访问认证（用户名 + 密码）", "Set or remove access authentication (username + password) on a route"),
+		Example: `  vantu route auth api.example.com --user alice --password 'S3cret!pass'
+  vantu route auth api.example.com --off`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if authOff == (authUser != "") {
+				return &CLIExitError{ExitCode: 2, Err: fmt.Errorf("%s", tr("请指定 --user 与 --password，或使用 --off", "specify --user and --password, or --off"))}
+			}
+			var rt store.Route
+			_, err := gf.execAPI(cmd.Context(), http.MethodPut, "/api/v1/routes/"+args[0]+"/auth",
+				map[string]string{"username": authUser, "password": authPassword}, &rt)
+			if err == nil && !gf.jsonOut {
+				if rt.BasicAuthUser != "" {
+					fmt.Printf(tr("已为 %s 开启访问认证（用户 %s）\n", "Enabled access authentication for %s (user %s)\n"), rt.FullDomain, rt.BasicAuthUser)
+				} else {
+					fmt.Printf(tr("已关闭 %s 的访问认证\n", "Disabled access authentication for %s\n"), rt.FullDomain)
+				}
+			}
+			return err
+		},
+	}
+	authCmd.Flags().StringVar(&authUser, "user", "", tr("访问认证用户名", "Access username"))
+	authCmd.Flags().StringVar(&authPassword, "password", "", tr("访问认证密码（至少 6 位）", "Access password (at least 6 characters)"))
+	authCmd.Flags().BoolVar(&authOff, "off", false, tr("关闭访问认证", "Remove access authentication"))
 
 	pauseCmd := &cobra.Command{
 		Use:   "pause <domain-or-id>",
@@ -537,7 +571,7 @@ func newRouteCmd(gf *globalFlags) *cobra.Command {
 	rmCmd.Flags().BoolVarP(&rmYes, "yes", "y", false, tr("跳过交互确认直接删除", "Delete without interactive confirmation"))
 	rmCmd.Flags().BoolVar(&keepDNS, "keep-dns", false, tr("仅移除边缘反代规则，保留远端 DNS 记录", "Only remove the edge proxy rule and keep the DNS record"))
 
-	routeCmd.AddCommand(lsCmd, inspectCmd, proxyCmd, pauseCmd, resumeCmd, retryCmd, rmCmd)
+	routeCmd.AddCommand(lsCmd, inspectCmd, proxyCmd, authCmd, pauseCmd, resumeCmd, retryCmd, rmCmd)
 	return routeCmd
 }
 

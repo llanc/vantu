@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/llanc/vantu/internal/api"
 	"github.com/llanc/vantu/internal/config"
@@ -419,6 +422,47 @@ func TestFullLifecyclePublishRelayProbeAndDriftReconcile(t *testing.T) {
 	if err != nil || resumed.LifecycleState != "active" {
 		t.Fatalf("ResumeRoute failed: %+v err=%v", resumed, err)
 	}
+
+	// 10b. HTTP Basic Auth is pushed to the edge as a bcrypt account, survives retry and can be removed.
+	caddyID := "vantu-route-" + rt.ID
+	edgeAuthHandler := func() map[string]any {
+		caddyMu.RLock()
+		defer caddyMu.RUnlock()
+		handles, _ := caddyRoutes[caddyID]["handle"].([]any)
+		if len(handles) == 0 {
+			return nil
+		}
+		h, _ := handles[0].(map[string]any)
+		if h["handler"] != "authentication" {
+			return nil
+		}
+		return h
+	}
+	if _, err := svc.SetRouteAuth(ctx, rt.ID, "alice", "", "test"); err == nil {
+		t.Fatal("expected enabling auth without a password to fail")
+	}
+	if _, err := svc.SetRouteAuth(ctx, rt.ID, "alice", "s3cret-pass", "test"); err != nil {
+		t.Fatalf("SetRouteAuth failed: %v", err)
+	}
+	authH := edgeAuthHandler()
+	if authH == nil {
+		t.Fatalf("edge route has no authentication handler: %+v", caddyRoutes[caddyID])
+	}
+	acct := authH["providers"].(map[string]any)["http_basic"].(map[string]any)["accounts"].([]any)[0].(map[string]any)
+	rawHash, _ := base64.StdEncoding.DecodeString(acct["password"].(string))
+	if acct["username"] != "alice" || bcrypt.CompareHashAndPassword(rawHash, []byte("s3cret-pass")) != nil {
+		t.Fatalf("unexpected basic auth account: %+v", acct)
+	}
+	if detail, _ := svc.GetRouteDetail(ctx, rt.ID); !strings.Contains(fmt.Sprint(detail.CaddyPayload), "<hidden>") {
+		t.Fatal("route detail must not expose the basic auth hash")
+	}
+	if _, err := svc.RetryRoute(ctx, rt.ID, "test"); err != nil || edgeAuthHandler() == nil {
+		t.Fatalf("basic auth lost after retry (err=%v)", err)
+	}
+	if _, err := svc.SetRouteAuth(ctx, rt.ID, "", "", "test"); err != nil || edgeAuthHandler() != nil {
+		t.Fatalf("disabling basic auth failed (err=%v)", err)
+	}
+
 	if err := svc.DeleteRoute(ctx, rt.ID, true, "test"); err != nil {
 		t.Fatalf("DeleteRoute failed: %v", err)
 	}
