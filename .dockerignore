@@ -11,3 +11,4 @@ design-demos
 docs
 *.md
 !README.md
+!README.en.md

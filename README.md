@@ -1,8 +1,12 @@
 # 小凡兔 · Vantu
 
 [![CI](https://github.com/llanc/vantu/actions/workflows/ci.yml/badge.svg)](https://github.com/llanc/vantu/actions/workflows/ci.yml)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/llanc/vantu)](./go.mod)
+[![Go](https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go&logoColor=white)](./go.mod)
+[![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vuedotjs&logoColor=white)](./web/package.json)
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io%2Fllanc%2Fvantu-2496ED?logo=docker&logoColor=white)](./Dockerfile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
+**简体中文** | [English](./README.en.md)
 
 轻量级云边隧道与反向代理编排工具。将本地 Docker 容器或内网端口发布为公网 HTTPS 服务，同时提供 Web 控制台与命令行 (`vantu` / `xft`)。
 
