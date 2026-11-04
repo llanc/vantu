@@ -314,7 +314,7 @@ func GenerateBootstrapBundle(nodeName, publicIP, tailscaleIP, secret string) Boo
 										},
 										"headers": map[string]any{
 											"request": map[string]any{
-												"set": map[string][]string{"Host": {"localhost"}},
+												"set": map[string][]string{"Host": {"127.0.0.1"}},
 											},
 										},
 									},
