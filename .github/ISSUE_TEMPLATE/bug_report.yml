@@ -1,0 +1,32 @@
+name: Bug 报告
+description: 反馈功能异常、构建失败或链路编排问题
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 简要说明发生了什么问题，以及预期行为是什么。
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 提供复现命令或操作步骤（请脱敏 Token / IP / 密钥）。
+      placeholder: |
+        1. 执行 `xft publish ...`
+        2. 返回错误码 `...`
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境信息
+      description: 粘贴 `xft doctor --json` 或版本信息。
+      render: shell
+    validations:
+      required: false

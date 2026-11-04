@@ -1,37 +1,42 @@
 # 小凡兔 · Vantu
 
-> **轻量级云边隧道与反向代理自动化编排工具** — 5 秒将本地未暴露的 Docker 容器或内网端口发布为公网 HTTPS 服务，原生支持 Web 控制台与 AI Coding Agent CLI (`vantu` / `xft`)。
+[![CI](https://github.com/llanc/vantu/actions/workflows/ci.yml/badge.svg)](https://github.com/llanc/vantu/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/llanc/vantu)](./go.mod)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
+轻量级云边隧道与反向代理编排工具。将本地 Docker 容器或内网端口发布为公网 HTTPS 服务，同时提供 Web 控制台与命令行 (`vantu` / `xft`)。
 
 ---
 
 ## 核心特性
 
-1. **三合一端到端自动编排**：一次点击或一条命令自动完成 **DNS 解析写入 (Cloudflare / DNSPod)** → **Tailscale 内网直连或安全桥接** → **边缘公网 VPS Caddy `@id` 原子路由与 ACME 证书签发**。
-2. **零自定义边缘 Agent**：公网 VPS 只需运行官方纯净 `caddy:2.8-alpine` 容器，小凡兔内置自动生成带 Tailscale 网段白名单与 Bearer 密钥守卫的 `docker-compose.yml` 与 `bootstrap.json`。
-3. **内置 Local Relay 安全桥接 (`:18080`)**：本地容器哪怕未映射 `-p` 端口或仅监听 `127.0.0.1`，也无需重启容器或暴露全网卡，直接由小凡兔通过单端口多路复用 + HMAC 签名安全穿透。
-4. **动态实景链路与源站证书巡检**：按每条路由真实的转发路径动态呈现 **3 / 4 / 5 跳**（是否经过 `Local Relay` 与 `Cloudflare CDN`）；开启 CDN 时还会绕过代理直连边缘节点 `:443` 核验源站证书剩余天数。
-5. **AI Agent First 双命令体验**：官方命令 `vantu`（内置短别名软链 `xft`），全命令支持 `--json` 信封、`--dry-run` 预演、确定性退出码与一键导出 `SKILL.md`。
-6. **单静态二进制 + 单实例 WAL SQLite**：`CGO_ENABLED=0` 纯 Go 编译内嵌 Vue 3 + TypeScript 控制台，空闲内存 `< 30MB`。
+1. **端到端路由编排**：通过单次操作完成 **DNS 记录同步（Cloudflare / 腾讯云 DNSPod）** → **Tailscale 内网直连或本地安全桥接** → **边缘 VPS Caddy `@id` 原子路由下发与 ACME 证书签发**。
+2. **边缘节点免自定义 Agent**：边缘公网 VPS 仅需运行官方 `caddy:2.8-alpine` 容器，Vantu 可直接生成带 Tailscale 网段白名单与 Bearer 密钥守卫的引导配置。
+3. **Local Relay 本地桥接 (`:18080`)**：对未映射宿主机端口（无 `-p`）或仅监听 `127.0.0.1` 的本地容器，通过单端口多路复用与 `X-Vantu-Relay-Key` HMAC 签名转发，无需重启容器或暴露宿主机端口。
+4. **动态跳数链路与源站证书巡检**：根据每条路由的实际配置动态展示 **3 / 4 / 5 跳**拓扑（按需包含 `Local Relay` 与 `Cloudflare CDN`）；开启 CDN 代理时支持绕过 CDN 直连边缘节点 `:443` 校验源站证书剩余有效期。
+5. **CLI 与 AI Agent 友好**：提供 `vantu`（及短别名 `xft`），全命令支持 `--json` 结构化输出、`--dry-run` 变更预演、确定性退出码（`0~7`）与 `SKILL.md` 导出。
+6. **单文件交付**：`CGO_ENABLED=0` 静态编译，内嵌 Vue 3 + TypeScript 控制台与纯 Go SQLite（WAL 模式）。
 
 ---
 
-## 快速启动
+## 快速开始
 
-### 方式一：Docker Compose 一键部署（推荐）
+### 方式一：Docker Compose 部署（推荐）
 
 ```bash
 docker compose up -d
 ```
 
-打开浏览器访问 `http://<本机IP>:8089`，完成首次管理员口令初始化即可使用。容器内可直接执行：
+默认监听 `http://<本机IP>:8089`，首次打开浏览器可完成管理员密码初始化。容器内内置 `vantu` 与 `xft` 命令：
 
 ```bash
-docker exec -it vantu vantu capabilities --json
-# 或使用等价短别名：
+docker exec -it vantu xft capabilities --json
 docker exec -it vantu xft doctor
 ```
 
 ### 方式二：从源码构建单文件二进制
+
+环境要求：Go `1.27+`、Node.js `20+`、pnpm `12+`。
 
 ```bash
 make build
@@ -40,10 +45,10 @@ make build
 
 ### 部署后将控制台自身发布到公网（自代理）
 
-适用于无法直接访问 `:8089` 的场景（如无图形界面的服务器、远程主机）。以下命令均在部署 Vantu 的机器上执行，CLI 通过本地 Unix Socket 通信，无需登录。Docker 部署时在命令前加 `docker exec -it vantu`。
+适用于无图形界面或无法直接访问 `:8089` 的远程主机。以下命令在部署 Vantu 的本机执行，CLI 默认通过本地 Unix Socket 免密通信（Docker 部署时在命令前加 `docker exec -it vantu`）：
 
 ```bash
-# 1. 初始化管理员密码（--generate 自动生成并打印，或使用 --password 指定）
+# 1. 初始化管理员密码（--generate 自动生成随机密码并打印，或用 --password 指定）
 xft admin passwd --generate
 
 # 2. 添加 DNS 凭据
@@ -53,44 +58,83 @@ xft dns add-cf --api-token <CLOUDFLARE_API_TOKEN>
 # 3. 生成边缘节点 Caddy 部署命令，复制到边缘 VPS 上执行
 xft node bootstrap --name edge --public-ip <边缘公网IP> --ts-ip <边缘TailscaleIP>
 
-# 4. 注册边缘节点（--secret 使用上一步输出的 Auth Secret）
+# 4. 注册边缘节点（--secret 填入上一步输出的 Auth Secret）
 xft node add --name edge --public-ip <边缘公网IP> --ts-ip <边缘TailscaleIP> --secret <AUTH_SECRET> --default
 
-# 5. 发布控制台
+# 5. 将控制台自身发布到公网 HTTPS
 xft publish --target self --domain vantu.example.com --proxied --wait
 ```
 
-- `--target self` 自动指向当前实例的监听端口；省略 `--domain` 时使用 `vantu.<默认根域名>`。
-- 未设置管理员密码时，`--target self` 会被拒绝执行，避免初始化页面暴露在公网。
-- 忘记密码时，在本机执行 `xft admin passwd --password <新密码>` 即可重置。
-- 也可以在 Web 控制台「发布服务」中选择「本机控制台」完成同样操作。
+说明：
+- `--target self` 自动解析当前实例的监听端口并启用 `sse` 预设；省略 `--domain` 时默认使用 `vantu.<默认根域名>`。
+- 未初始化管理员密码前，`--target self` 会拒绝执行，防止初始化页面暴露到公网。
+- 忘记密码时，可在本机执行 `xft admin passwd --password <新密码>` 重置。
+- Web 控制台「发布服务」弹窗中也可选择「本机控制台」完成相同配置。
 
 ---
 
-## AI CLI (`vantu` / `xft`) 常用示例
+## CLI (`vantu` / `xft`) 常用示例
 
 ```bash
-# 1. 查看系统全局就绪能力（可用根域名、边缘节点、待发布容器）
-vantu capabilities --json
+# 1. 查看当前可用根域名、边缘节点与本机容器列表
+xft capabilities --json
 
-# 2. 零副作用预览发布计划与生成的 Caddy JSON 块
-vantu publish --target container:sub2api --domain api.xiaofantu.com --preset sse --dry-run
+# 2. 预览发布计划与生成的 Caddy 路由 JSON（零副作用）
+xft publish --target container:sub2api --domain api.example.com --preset sse --dry-run
 
-# 3. 正式发布服务并开启 Cloudflare 小黄云代理
-vantu publish --target 127.0.0.1:8080 --domain demo.xiaofantu.com --proxied --wait
+# 3. 发布本地服务并开启 Cloudflare CDN 代理
+xft publish --target 127.0.0.1:8080 --domain demo.example.com --proxied --wait
 
-# 4. 查看单条路由详情并触发实时检测
-vantu route inspect demo.xiaofantu.com --probe
+# 4. 查看单条路由详情并触发实时链路拨测
+xft route inspect demo.example.com --probe
 
-# 5. 导出供 Claude Code / Codex / Cursor / Antigravity 使用的 SKILL.md
-vantu skill export -o ~/.claude/skills/vantu-publish/SKILL.md
+# 5. 导出供 Claude Code / Cursor / Codex 使用的 SKILL.md
+xft skill export -o ~/.claude/skills/vantu-publish/SKILL.md
 ```
+
+### 本地 Socket 与远程连接解析顺序
+
+当未显式指定 `--endpoint` 或 `VANTU_ENDPOINT` 时，CLI 按以下顺序查找本地 Unix Socket 免密通道：
+
+1. `--socket <路径>` 命令行参数
+2. `VANTU_SOCK_PATH` 环境变量
+3. `$VANTU_DATA_DIR/vantu.sock`
+4. `./data/vantu.sock`
+5. `/data/vantu.sock`
+
+若以上 Socket 均不存在，则回退至 `~/.config/vantu/credentials.json`（由 `vantu login` 生成）或 `http://127.0.0.1:8089`。
 
 ---
 
-## 设计与架构文档索引
+## 环境变量说明
 
-- [docs/README.md](./docs/README.md)：项目产品总览与设计决策
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `VANTU_LISTEN_ADDR` | `0.0.0.0:8089` | Web 控制台与 HTTP API 监听地址 |
+| `VANTU_DATA_DIR` | `./data`（容器内为 `/data`） | 数据目录（存放 SQLite 数据库、主密钥与 Unix Socket） |
+| `VANTU_DB_PATH` | `<VANTU_DATA_DIR>/vantu.db` | SQLite 数据库文件路径 |
+| `VANTU_SOCK_PATH` | `<VANTU_DATA_DIR>/vantu.sock` | 本地管理 Unix Domain Socket 路径 |
+| `VANTU_RELAY_PORT` | `18080` | Local Relay 安全桥接监听端口 |
+| `VANTU_RELAY_BIND_IP` | 自动取本机 Tailscale IP | Local Relay 绑定网卡地址 |
+| `VANTU_DOCKER_SOCK` | `/var/run/docker.sock` | Docker Engine Socket 路径 |
+| `VANTU_TAILSCALE_SOCK` | `/var/run/tailscale/tailscaled.sock` | Tailscale LocalAPI Socket 路径 |
+| `VANTU_PROBE_INTERVAL_SEC` | `60` | 后台链路与证书巡检周期（秒，最小 `10`） |
+| `VANTU_MASTER_KEY` | 自动生成 `<VANTU_DATA_DIR>/.master.key` | 凭据加密主密钥（可选通过环境变量外部注入） |
+| `VANTU_ADMIN_PASSWORD` | 空 | 首次启动时自动初始化的管理员密码（可选） |
+
+---
+
+## 设计与架构文档
+
+- [docs/README.md](./docs/README.md)：项目总览与架构决策说明
 - [docs/01-PRD.md](./docs/01-PRD.md)：产品需求规格说明书 (`FR-01` ~ `FR-09`)
 - [docs/02-ARCHITECTURE.md](./docs/02-ARCHITECTURE.md)：系统架构、SQLite 数据模型、REST/SSE API 与 CLI 规范
-- [docs/03-UI-UX-SPEC.md](./docs/03-UI-UX-SPEC.md)：高密度瑞士网格与动态链路拓扑交互设计规范
+- [docs/03-UI-UX-SPEC.md](./docs/03-UI-UX-SPEC.md)：高密度网格与动态链路拓扑交互设计规范
+- [CONTRIBUTING.md](./CONTRIBUTING.md)：本地开发、测试与贡献指南
+- [SECURITY.md](./SECURITY.md)：安全机制说明与漏洞上报方式
+
+---
+
+## 开源许可
+
+本项目基于 [MIT License](./LICENSE) 开源。`docs/assets/huashu-specimens/` 中的设计参考样张归属说明见该目录下的 [LICENSE](./docs/assets/huashu-specimens/LICENSE)。

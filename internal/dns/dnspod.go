@@ -131,7 +131,7 @@ func (p *DNSPodProvider) EnsureRecord(ctx context.Context, in EnsureRecordInput)
 
 func (p *DNSPodProvider) SetProxied(_ context.Context, _, _, _, _ string, proxied bool) error {
 	if proxied {
-		return fmt.Errorf("DNSPod 纯解析厂商不支持 Cloudflare 小黄云 CDN 开关")
+		return fmt.Errorf("DNSPod 纯解析厂商不支持 Cloudflare CDN 代理开关")
 	}
 	return nil
 }

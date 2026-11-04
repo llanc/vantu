@@ -71,9 +71,11 @@ func newAPIClient(flagEndpoint, flagToken, flagSock string) *apiClient {
 		sockCandidates := []string{
 			strings.TrimSpace(flagSock),
 			strings.TrimSpace(os.Getenv("VANTU_SOCK_PATH")),
-			"./data/vantu.sock",
-			"/data/vantu.sock",
 		}
+		if dd := strings.TrimSpace(os.Getenv("VANTU_DATA_DIR")); dd != "" {
+			sockCandidates = append(sockCandidates, filepath.Join(dd, "vantu.sock"))
+		}
+		sockCandidates = append(sockCandidates, "./data/vantu.sock", "/data/vantu.sock")
 		for _, sp := range sockCandidates {
 			if sp == "" {
 				continue

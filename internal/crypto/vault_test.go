@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xiaofantu/vantu/internal/crypto"
+	"github.com/llanc/vantu/internal/crypto"
 )
 
 func TestVaultEncryptDecryptAndPersistence(t *testing.T) {

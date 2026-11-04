@@ -1,0 +1,13 @@
+.git
+.github
+data
+vantu
+xft
+bin
+web/node_modules
+web/dist/assets
+web/dist/index.html
+design-demos
+docs
+*.md
+!README.md

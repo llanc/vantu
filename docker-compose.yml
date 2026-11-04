@@ -1,7 +1,7 @@
 services:
   vantu:
     build: .
-    image: xiaofantu/vantu:latest
+    image: ghcr.io/llanc/vantu:latest
     container_name: vantu
     restart: unless-stopped
     network_mode: host

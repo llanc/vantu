@@ -20,13 +20,13 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/xiaofantu/vantu/internal/config"
-	"github.com/xiaofantu/vantu/internal/crypto"
-	"github.com/xiaofantu/vantu/internal/orchestrator"
-	"github.com/xiaofantu/vantu/internal/skilldoc"
-	"github.com/xiaofantu/vantu/internal/store"
-	"github.com/xiaofantu/vantu/internal/ulid"
-	"github.com/xiaofantu/vantu/web"
+	"github.com/llanc/vantu/internal/config"
+	"github.com/llanc/vantu/internal/crypto"
+	"github.com/llanc/vantu/internal/orchestrator"
+	"github.com/llanc/vantu/internal/skilldoc"
+	"github.com/llanc/vantu/internal/store"
+	"github.com/llanc/vantu/internal/ulid"
+	"github.com/llanc/vantu/web"
 )
 
 type ctxKey string
@@ -39,10 +39,10 @@ const (
 )
 
 type Envelope struct {
-	OK    bool                  `json:"ok"`
-	Data  any                   `json:"data,omitempty"`
+	OK    bool                   `json:"ok"`
+	Data  any                    `json:"data,omitempty"`
 	Error *orchestrator.AppError `json:"error,omitempty"`
-	Meta  map[string]any        `json:"meta,omitempty"`
+	Meta  map[string]any         `json:"meta,omitempty"`
 }
 
 type loginAttempt struct {

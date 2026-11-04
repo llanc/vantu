@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xiaofantu/vantu/internal/cli"
+	"github.com/llanc/vantu/internal/cli"
 )
 
 func main() {

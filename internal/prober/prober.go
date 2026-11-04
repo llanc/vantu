@@ -14,12 +14,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiaofantu/vantu/internal/caddy"
-	"github.com/xiaofantu/vantu/internal/crypto"
-	"github.com/xiaofantu/vantu/internal/discovery"
-	"github.com/xiaofantu/vantu/internal/events"
-	"github.com/xiaofantu/vantu/internal/store"
-	"github.com/xiaofantu/vantu/internal/tailscale"
+	"github.com/llanc/vantu/internal/caddy"
+	"github.com/llanc/vantu/internal/crypto"
+	"github.com/llanc/vantu/internal/discovery"
+	"github.com/llanc/vantu/internal/events"
+	"github.com/llanc/vantu/internal/store"
+	"github.com/llanc/vantu/internal/tailscale"
 )
 
 // Options configures optional overrides (primarily used for deterministic E2E testing without root :443).

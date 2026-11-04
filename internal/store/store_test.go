@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xiaofantu/vantu/internal/store"
-	"github.com/xiaofantu/vantu/internal/ulid"
+	"github.com/llanc/vantu/internal/store"
+	"github.com/llanc/vantu/internal/ulid"
 )
 
 func TestStoreCRUDAndWalLifecycle(t *testing.T) {

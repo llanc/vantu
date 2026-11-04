@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiaofantu/vantu/internal/crypto"
-	"github.com/xiaofantu/vantu/internal/discovery"
-	"github.com/xiaofantu/vantu/internal/store"
-	"github.com/xiaofantu/vantu/internal/tailscale"
+	"github.com/llanc/vantu/internal/crypto"
+	"github.com/llanc/vantu/internal/discovery"
+	"github.com/llanc/vantu/internal/store"
+	"github.com/llanc/vantu/internal/tailscale"
 )
 
 const (
@@ -36,14 +36,14 @@ type cachedTarget struct {
 // It allows Edge Caddy to securely reach unexposed Docker containers (no -p or 127.0.0.1-only)
 // without exposing container ports on host network interfaces.
 type Server struct {
-	store         *store.Store
-	vault         *crypto.Vault
-	docker        *discovery.DockerWatcher
-	tsInspector   *tailscale.Inspector
-	bindIP        string
-	port          int
-	stdTransport  *http.Transport
-	tlsSkipTrans  *http.Transport
+	store        *store.Store
+	vault        *crypto.Vault
+	docker       *discovery.DockerWatcher
+	tsInspector  *tailscale.Inspector
+	bindIP       string
+	port         int
+	stdTransport *http.Transport
+	tlsSkipTrans *http.Transport
 
 	mu          sync.RWMutex
 	boundAddr   string

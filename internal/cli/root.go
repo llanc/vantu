@@ -12,12 +12,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xiaofantu/vantu/internal/caddy"
-	"github.com/xiaofantu/vantu/internal/config"
-	"github.com/xiaofantu/vantu/internal/discovery"
-	"github.com/xiaofantu/vantu/internal/orchestrator"
-	"github.com/xiaofantu/vantu/internal/skilldoc"
-	"github.com/xiaofantu/vantu/internal/store"
+	"github.com/llanc/vantu/internal/caddy"
+	"github.com/llanc/vantu/internal/config"
+	"github.com/llanc/vantu/internal/discovery"
+	"github.com/llanc/vantu/internal/orchestrator"
+	"github.com/llanc/vantu/internal/skilldoc"
+	"github.com/llanc/vantu/internal/store"
 )
 
 type globalFlags struct {
@@ -370,7 +370,7 @@ func newPublishCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&in.EdgeNodeID, "node", "", "边缘公网节点名称或 ID (默认使用默认节点)")
 	cmd.Flags().StringVar(&in.Preset, "preset", "", "协议预设: web | sse | webdav | https_insecure")
 	cmd.Flags().StringVar(&in.ForwardMode, "mode", "auto", "转发通道: auto | direct | relay")
-	cmd.Flags().BoolVar(&in.DNSProxied, "proxied", false, "开启 Cloudflare 小黄云 CDN 代理")
+	cmd.Flags().BoolVar(&in.DNSProxied, "proxied", false, "开启 Cloudflare CDN 代理")
 	cmd.Flags().BoolVar(&in.AdoptDNS, "adopt-dns", false, "允许接管 DNS 厂商中已存在的非小凡兔同名解析")
 	cmd.Flags().BoolVar(&in.DryRun, "dry-run", false, "仅生成执行计划与 Caddy JSON 预览，不执行真实写入")
 	cmd.Flags().BoolVar(&in.WaitTLS, "wait", false, "阻塞等待边缘源站 TLS 证书签发就绪")
@@ -457,7 +457,7 @@ func newRouteCmd(gf *globalFlags) *cobra.Command {
 	var proxyOn, proxyOff bool
 	proxyCmd := &cobra.Command{
 		Use:   "proxy <domain-or-id>",
-		Short: "开启或关闭路由的 Cloudflare 小黄云 CDN 代理",
+		Short: "开启或关闭路由的 Cloudflare CDN 代理",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if proxyOn == proxyOff {
@@ -471,8 +471,8 @@ func newRouteCmd(gf *globalFlags) *cobra.Command {
 			return err
 		},
 	}
-	proxyCmd.Flags().BoolVar(&proxyOn, "on", false, "开启 Cloudflare 小黄云代理")
-	proxyCmd.Flags().BoolVar(&proxyOff, "off", false, "关闭代理，恢复 DNS Only 灰云直连")
+	proxyCmd.Flags().BoolVar(&proxyOn, "on", false, "开启 Cloudflare CDN 代理")
+	proxyCmd.Flags().BoolVar(&proxyOff, "off", false, "关闭代理，恢复 DNS 直连")
 
 	pauseCmd := &cobra.Command{
 		Use:   "pause <domain-or-id>",

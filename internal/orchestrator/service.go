@@ -12,17 +12,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiaofantu/vantu/internal/caddy"
-	"github.com/xiaofantu/vantu/internal/config"
-	"github.com/xiaofantu/vantu/internal/crypto"
-	"github.com/xiaofantu/vantu/internal/discovery"
-	"github.com/xiaofantu/vantu/internal/dns"
-	"github.com/xiaofantu/vantu/internal/events"
-	"github.com/xiaofantu/vantu/internal/prober"
-	"github.com/xiaofantu/vantu/internal/relay"
-	"github.com/xiaofantu/vantu/internal/store"
-	"github.com/xiaofantu/vantu/internal/tailscale"
-	"github.com/xiaofantu/vantu/internal/ulid"
+	"github.com/llanc/vantu/internal/caddy"
+	"github.com/llanc/vantu/internal/config"
+	"github.com/llanc/vantu/internal/crypto"
+	"github.com/llanc/vantu/internal/discovery"
+	"github.com/llanc/vantu/internal/dns"
+	"github.com/llanc/vantu/internal/events"
+	"github.com/llanc/vantu/internal/prober"
+	"github.com/llanc/vantu/internal/relay"
+	"github.com/llanc/vantu/internal/store"
+	"github.com/llanc/vantu/internal/tailscale"
+	"github.com/llanc/vantu/internal/ulid"
 )
 
 // AppError carries deterministic machine-readable error codes, remediation hints, HTTP statuses, and CLI exit codes.
@@ -119,22 +119,22 @@ type AddEdgeNodeInput struct {
 
 // CapabilitiesReport provides AI agents and Web UI with complete system readiness context in a single call.
 type CapabilitiesReport struct {
-	Version             string                        `json:"version"`
-	Initialized         bool                          `json:"initialized"`
-	DBSizeBytes         int64                         `json:"db_size_bytes"`
-	DockerAvailable     bool                          `json:"docker_available"`
-	ContainerCount      int                           `json:"container_count"`
-	UnexposedContainers int                           `json:"unexposed_containers"`
-	Tailscale           tailscale.SelfInfo            `json:"tailscale"`
-	RelayRunning        bool                          `json:"relay_running"`
-	RelayAddr           string                        `json:"relay_addr"`
-	DefaultZone         *store.DNSZone                `json:"default_zone,omitempty"`
-	DefaultNode         *store.EdgeNode               `json:"default_node,omitempty"`
-	Zones               []store.DNSZone               `json:"zones"`
-	Nodes               []store.EdgeNode              `json:"nodes"`
-	ActiveRoutes        int                           `json:"active_routes"`
-	TotalRoutes         int                           `json:"total_routes"`
-	Presets             []string                      `json:"presets"`
+	Version             string                          `json:"version"`
+	Initialized         bool                            `json:"initialized"`
+	DBSizeBytes         int64                           `json:"db_size_bytes"`
+	DockerAvailable     bool                            `json:"docker_available"`
+	ContainerCount      int                             `json:"container_count"`
+	UnexposedContainers int                             `json:"unexposed_containers"`
+	Tailscale           tailscale.SelfInfo              `json:"tailscale"`
+	RelayRunning        bool                            `json:"relay_running"`
+	RelayAddr           string                          `json:"relay_addr"`
+	DefaultZone         *store.DNSZone                  `json:"default_zone,omitempty"`
+	DefaultNode         *store.EdgeNode                 `json:"default_node,omitempty"`
+	Zones               []store.DNSZone                 `json:"zones"`
+	Nodes               []store.EdgeNode                `json:"nodes"`
+	ActiveRoutes        int                             `json:"active_routes"`
+	TotalRoutes         int                             `json:"total_routes"`
+	Presets             []string                        `json:"presets"`
 	Containers          []discovery.DiscoveredContainer `json:"containers,omitempty"`
 }
 
@@ -194,10 +194,10 @@ func NewService(
 	}
 }
 
-func (s *Service) Store() *store.Store { return s.store }
-func (s *Service) Vault() *crypto.Vault { return s.vault }
+func (s *Service) Store() *store.Store    { return s.store }
+func (s *Service) Vault() *crypto.Vault   { return s.vault }
 func (s *Service) Prober() *prober.Prober { return s.prober }
-func (s *Service) Hub() *events.Hub { return s.hub }
+func (s *Service) Hub() *events.Hub       { return s.hub }
 
 // Capabilities returns full environment readiness for Web UI & AI CLI (`vantu capabilities`).
 func (s *Service) Capabilities(ctx context.Context, includeContainers bool) (*CapabilitiesReport, error) {
@@ -818,14 +818,14 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 			if !rt.OriginTLSOK {
 				emitStep("probe_verify", "检测连通性与证书", "error", "等待证书签发超时，后台继续检测")
 				return &PublishResult{
-						DryRun:       false,
-						Route:        rt,
-						Steps:        steps,
-						CaddyPayload: caddyPayload,
-						CLICommand:   cliCmd,
-					}, newAppErr("TLS_TIMEOUT",
-						fmt.Sprintf("路由已发布至 %s，但等待 TLS 证书签发超时", rt.FullDomain),
-						"Caddy 仍在后台申请证书，稍后可通过 vantu route inspect 查看状态", 504, 7)
+					DryRun:       false,
+					Route:        rt,
+					Steps:        steps,
+					CaddyPayload: caddyPayload,
+					CLICommand:   cliCmd,
+				}, newAppErr("TLS_TIMEOUT",
+					fmt.Sprintf("路由已发布至 %s，但等待 TLS 证书签发超时", rt.FullDomain),
+					"Caddy 仍在后台申请证书，稍后可通过 vantu route inspect 查看状态", 504, 7)
 			}
 		}
 	}
@@ -885,7 +885,7 @@ func (s *Service) ToggleProxy(ctx context.Context, idOrDomain string, proxied bo
 		return nil, err
 	}
 	if proxied && !zone.SupportsProxy {
-		return nil, newAppErr("VALIDATION_ERROR", fmt.Sprintf("域名 %s 所属解析厂商不支持 Cloudflare CDN 小黄云代理", zone.ZoneName), "", 400, 2)
+		return nil, newAppErr("VALIDATION_ERROR", fmt.Sprintf("域名 %s 所属解析厂商不支持 Cloudflare CDN 代理", zone.ZoneName), "", 400, 2)
 	}
 	node, err := s.store.GetEdgeNode(ctx, rt.EdgeNodeID)
 	if err != nil {

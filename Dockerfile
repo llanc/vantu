@@ -1,27 +1,32 @@
-# Stage 1: Build Vue 3 + TypeScript Console Bundle
-FROM node:22-alpine AS web-builder
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# syntax=docker/dockerfile:1
+
+# Stage 1: build the web console
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web-builder
 WORKDIR /src/web
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --allow-build=esbuild
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN PNPM_VERSION="$(sed -n 's/.*"packageManager": *"pnpm@\([^"]*\)".*/\1/p' package.json)" \
+    && npm install -g "pnpm@${PNPM_VERSION}" \
+    && pnpm install --frozen-lockfile
 COPY web/ ./
 RUN pnpm build
 
-# Stage 2: Build Pure-Go Static Binary (CGO_ENABLED=0)
-FROM golang:1.24-alpine AS go-builder
-ARG VERSION=v0.1.0
+# Stage 2: build the static Go binary (cross-compiled for the target platform)
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS go-builder
+ARG VERSION=v0.0.0-dev
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 COPY --from=web-builder /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -trimpath \
-    -ldflags="-s -w -X github.com/xiaofantu/vantu/internal/config.Version=${VERSION}" \
+    -ldflags="-s -w -X github.com/llanc/vantu/internal/config.Version=${VERSION}" \
     -o /out/vantu ./cmd/vantu
 
-# Stage 3: Minimal Production Runtime (~20MB total)
-FROM alpine:3.21
+# Stage 3: runtime
+FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata \
     && mkdir -p /data
 COPY --from=go-builder /out/vantu /usr/local/bin/vantu

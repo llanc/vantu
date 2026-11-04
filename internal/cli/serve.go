@@ -11,16 +11,16 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/xiaofantu/vantu/internal/api"
-	"github.com/xiaofantu/vantu/internal/config"
-	"github.com/xiaofantu/vantu/internal/crypto"
-	"github.com/xiaofantu/vantu/internal/discovery"
-	"github.com/xiaofantu/vantu/internal/events"
-	"github.com/xiaofantu/vantu/internal/orchestrator"
-	"github.com/xiaofantu/vantu/internal/prober"
-	"github.com/xiaofantu/vantu/internal/relay"
-	"github.com/xiaofantu/vantu/internal/store"
-	"github.com/xiaofantu/vantu/internal/tailscale"
+	"github.com/llanc/vantu/internal/api"
+	"github.com/llanc/vantu/internal/config"
+	"github.com/llanc/vantu/internal/crypto"
+	"github.com/llanc/vantu/internal/discovery"
+	"github.com/llanc/vantu/internal/events"
+	"github.com/llanc/vantu/internal/orchestrator"
+	"github.com/llanc/vantu/internal/prober"
+	"github.com/llanc/vantu/internal/relay"
+	"github.com/llanc/vantu/internal/store"
+	"github.com/llanc/vantu/internal/tailscale"
 )
 
 func newServeCmd() *cobra.Command {

@@ -1,4 +1,4 @@
-module github.com/xiaofantu/vantu
+module github.com/llanc/vantu
 
 go 1.27.3
 

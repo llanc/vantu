@@ -1,0 +1,20 @@
+name: 功能建议
+description: 提出新功能、DNS 厂商驱动或协议预设需求
+title: "[Feat]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 需求背景与痛点
+      description: 你在什么使用场景下遇到了什么不便？
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望方案
+      description: 你希望 CLI 或 Web 控制台如何支持该能力？
+    validations:
+      required: true
