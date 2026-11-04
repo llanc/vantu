@@ -128,12 +128,8 @@ xft skill export -o ~/.claude/skills/vantu-publish/SKILL.md
 
 ---
 
-## 设计与架构文档
+## 开发与安全文档
 
-- [docs/README.md](./docs/README.md)：项目总览与架构决策说明
-- [docs/01-PRD.md](./docs/01-PRD.md)：产品需求规格说明书 (`FR-01` ~ `FR-09`)
-- [docs/02-ARCHITECTURE.md](./docs/02-ARCHITECTURE.md)：系统架构、SQLite 数据模型、REST/SSE API 与 CLI 规范
-- [docs/03-UI-UX-SPEC.md](./docs/03-UI-UX-SPEC.md)：高密度网格与动态链路拓扑交互设计规范
 - [CONTRIBUTING.md](./CONTRIBUTING.md)：本地开发、测试与贡献指南
 - [SECURITY.md](./SECURITY.md)：安全机制说明与漏洞上报方式
 
@@ -141,4 +137,4 @@ xft skill export -o ~/.claude/skills/vantu-publish/SKILL.md
 
 ## 开源许可
 
-本项目基于 [MIT License](./LICENSE) 开源。`docs/assets/huashu-specimens/` 中的设计参考样张归属说明见该目录下的 [LICENSE](./docs/assets/huashu-specimens/LICENSE)。
+本项目基于 [MIT License](./LICENSE) 开源。

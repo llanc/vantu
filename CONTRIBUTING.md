@@ -36,7 +36,7 @@ pnpm --dir web dev
 1. **边缘零自定义 Agent**：边缘节点仅运行官方 `caddy:2.8-alpine`，所有路由变更通过 Caddy Admin API `@id` 原子接口完成，不在边缘节点引入额外守护进程或数据库。
 2. **单库单连接池**：状态存储使用 `modernc.org/sqlite`（WAL 模式），保持 schema 简洁向后兼容。
 3. **CLI 与 Web 对等**：新增控制面能力时，优先在 `internal/orchestrator` 与 `internal/api` 实现，并同步支持 CLI（含 `--json` 结构化输出）与 Web 控制台。
-4. **错误码与退出码**：CLI 退出码遵循 `0~7` 规范（详见 `docs/02-ARCHITECTURE.md`），错误信息需包含可读原因与修复建议（`suggestion`）。
+4. **错误码与退出码**：CLI 退出码遵循 `0~7` 规范（`0` 成功、`2` 参数校验错误、`3` 鉴权失败、`4` DNS 冲突、`5` 边缘节点不可达、`6` 本地目标不可达、`7` 巡检异常），错误信息需包含可读原因与修复建议（`suggestion`）。
 
 ## 提交流程
 

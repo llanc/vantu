@@ -18,9 +18,12 @@
 /web/dist/*
 !/web/dist/.gitkeep
 
-# Local env & IDE
+# Local env, IDE & internal design notes
 .env
 .env.local
 .DS_Store
 .idea/
 .vscode/
+/设想.md
+/docs/
+/design-demos/

@@ -128,12 +128,8 @@ If no local socket is found, it falls back to `~/.config/vantu/credentials.json`
 
 ---
 
-## Architecture & Design Docs
+## Development & Security
 
-- [docs/README.md](./docs/README.md): Project overview & architectural decisions
-- [docs/01-PRD.md](./docs/01-PRD.md): Product Requirements Document (`FR-01` ~ `FR-09`)
-- [docs/02-ARCHITECTURE.md](./docs/02-ARCHITECTURE.md): System architecture, SQLite schema, REST/SSE API & CLI specification
-- [docs/03-UI-UX-SPEC.md](./docs/03-UI-UX-SPEC.md): Swiss grid & dynamic hop topology UI/UX specification
 - [CONTRIBUTING.md](./CONTRIBUTING.md): Development setup, testing & contribution guide
 - [SECURITY.md](./SECURITY.md): Security model & vulnerability reporting
 
@@ -141,4 +137,4 @@ If no local socket is found, it falls back to `~/.config/vantu/credentials.json`
 
 ## License
 
-Released under the [MIT License](./LICENSE). Attribution for the design reference specimens under `docs/assets/huashu-specimens/` is available in [docs/assets/huashu-specimens/LICENSE](./docs/assets/huashu-specimens/LICENSE).
+Released under the [MIT License](./LICENSE).
