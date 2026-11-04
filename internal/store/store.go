@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -219,37 +221,51 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(created_at DESC
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
 	}
-	return s.addMissingColumns("routes", map[string]string{
+	added, err := s.addMissingColumns("routes", map[string]string{
 		"basic_auth_user": "TEXT NOT NULL DEFAULT ''",
 		"basic_auth_hash": "TEXT NOT NULL DEFAULT ''",
+		"proxy_options":   "TEXT NOT NULL DEFAULT '{}'",
 	})
-}
-
-// addMissingColumns upgrades tables created by older releases in place.
-func (s *Store) addMissingColumns(table string, cols map[string]string) error {
-	rows, err := s.db.Query("SELECT name FROM pragma_table_info(?)", table)
 	if err != nil {
 		return err
+	}
+	if slices.Contains(added, "proxy_options") {
+		// Before v0.1.4 every HTTPS upstream skipped certificate verification implicitly.
+		if _, err := s.db.Exec(`UPDATE routes SET proxy_options = '{"tls_skip_verify":true}'
+WHERE upstream_scheme = 'https' OR preset = 'https_insecure'`); err != nil {
+			return fmt.Errorf("migrate routes.proxy_options: %w", err)
+		}
+	}
+	return nil
+}
+
+// addMissingColumns upgrades tables created by older releases in place and returns the columns it added.
+func (s *Store) addMissingColumns(table string, cols map[string]string) ([]string, error) {
+	rows, err := s.db.Query("SELECT name FROM pragma_table_info(?)", table)
+	if err != nil {
+		return nil, err
 	}
 	have := map[string]bool{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {
 			rows.Close()
-			return err
+			return nil, err
 		}
 		have[name] = true
 	}
 	rows.Close()
+	var added []string
 	for name, def := range cols {
 		if have[name] {
 			continue
 		}
 		if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, def)); err != nil {
-			return fmt.Errorf("migrate %s.%s: %w", table, name, err)
+			return nil, fmt.Errorf("migrate %s.%s: %w", table, name, err)
 		}
+		added = append(added, name)
 	}
-	return nil
+	return added, nil
 }
 
 // --- Admin & Sessions ---
@@ -704,7 +720,7 @@ SELECT r.id, r.subdomain, r.full_domain, r.zone_id, z.zone_name, z.supports_prox
        r.lifecycle_state, r.last_error, r.local_healthy, r.caddy_synced, r.origin_tls_ok,
        r.origin_cert_issuer, r.origin_cert_expires, r.origin_cert_days, r.public_cert_issuer,
        r.public_http_code, r.public_latency_ms, r.last_probed_at, r.note, r.created_at, r.updated_at,
-       r.basic_auth_user, r.basic_auth_hash
+       r.basic_auth_user, r.basic_auth_hash, r.proxy_options
 FROM routes r
 JOIN dns_zones z ON z.id = r.zone_id
 JOIN edge_nodes n ON n.id = r.edge_node_id
@@ -714,6 +730,7 @@ func scanRoute(scanner interface{ Scan(dest ...any) error }) (Route, error) {
 	var r Route
 	var supProxy, proxied, en, locOK, cadOK, tlsOK int
 	var certExp, probed sql.NullTime
+	var proxyJSON string
 	err := scanner.Scan(
 		&r.ID, &r.Subdomain, &r.FullDomain, &r.ZoneID, &r.ZoneName, &supProxy,
 		&r.EdgeNodeID, &r.EdgeNodeName, &r.EdgeNodePublicIP, &r.EdgeNodeTSRTTMs, &r.EdgeNodeTSType,
@@ -723,10 +740,15 @@ func scanRoute(scanner interface{ Scan(dest ...any) error }) (Route, error) {
 		&r.LifecycleState, &r.LastError, &locOK, &cadOK, &tlsOK,
 		&r.OriginCertIssuer, &certExp, &r.OriginCertDays, &r.PublicCertIssuer,
 		&r.PublicHTTPCode, &r.PublicLatencyMs, &probed, &r.Note, &r.CreatedAt, &r.UpdatedAt,
-		&r.BasicAuthUser, &r.BasicAuthHash,
+		&r.BasicAuthUser, &r.BasicAuthHash, &proxyJSON,
 	)
 	if err != nil {
 		return r, err
+	}
+	if proxyJSON != "" && proxyJSON != "{}" {
+		if err := json.Unmarshal([]byte(proxyJSON), &r.Proxy); err != nil {
+			return r, fmt.Errorf("decode proxy_options for %s: %w", r.ID, err)
+		}
 	}
 	r.SupportsProxy = supProxy == 1
 	r.DNSProxied = proxied == 1
@@ -773,7 +795,11 @@ func (s *Store) GetRoute(ctx context.Context, idOrDomain string) (*Route, error)
 
 func (s *Store) UpsertRoute(ctx context.Context, r Route) error {
 	now := time.Now().UTC()
-	_, err := s.db.ExecContext(ctx, `
+	proxyJSON, err := json.Marshal(r.Proxy)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
 INSERT INTO routes (
     id, subdomain, full_domain, zone_id, edge_node_id,
     source_type, container_name, container_id, forward_mode, upstream_scheme,
@@ -782,8 +808,8 @@ INSERT INTO routes (
     lifecycle_state, last_error, local_healthy, caddy_synced, origin_tls_ok,
     origin_cert_issuer, origin_cert_expires, origin_cert_days, public_cert_issuer,
     public_http_code, public_latency_ms, last_probed_at, note, created_at, updated_at,
-    basic_auth_user, basic_auth_hash
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    basic_auth_user, basic_auth_hash, proxy_options
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     subdomain = excluded.subdomain,
     full_domain = excluded.full_domain,
@@ -810,6 +836,7 @@ ON CONFLICT(id) DO UPDATE SET
     note = excluded.note,
     basic_auth_user = excluded.basic_auth_user,
     basic_auth_hash = excluded.basic_auth_hash,
+    proxy_options = excluded.proxy_options,
     updated_at = excluded.updated_at`,
 		r.ID, r.Subdomain, r.FullDomain, r.ZoneID, r.EdgeNodeID,
 		r.SourceType, r.ContainerName, r.ContainerID, r.ForwardMode, r.UpstreamScheme,
@@ -818,7 +845,7 @@ ON CONFLICT(id) DO UPDATE SET
 		r.LifecycleState, r.LastError, boolToInt(r.LocalHealthy), boolToInt(r.CaddySynced), boolToInt(r.OriginTLSOK),
 		r.OriginCertIssuer, r.OriginCertExpires, r.OriginCertDays, r.PublicCertIssuer,
 		r.PublicHTTPCode, r.PublicLatencyMs, r.LastProbedAt, r.Note, now, now,
-		r.BasicAuthUser, r.BasicAuthHash,
+		r.BasicAuthUser, r.BasicAuthHash, string(proxyJSON),
 	)
 	return err
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,13 @@ type RouteSpec struct {
 	RelayKeyHMAC   string
 	BasicAuthUser  string
 	BasicAuthHash  string // bcrypt
+
+	UpstreamHost    string
+	TLSSkipVerify   bool
+	Compress        bool
+	IPAllowlist     []string
+	RequestHeaders  map[string]string
+	ResponseHeaders map[string]string
 }
 
 const hiddenHash = "<hidden>"
@@ -237,11 +245,15 @@ func BuildRoutePayload(spec RouteSpec) map[string]any {
 		"read_timeout":  fmt.Sprintf("%ds", readTimeout),
 		"write_timeout": fmt.Sprintf("%ds", readTimeout),
 	}
-	// When Direct mode hits an HTTPS self-signed upstream directly (not via Local Relay HTTP wrapper), enable TLS skip verify.
-	if spec.ForwardMode == "direct" && (spec.Preset == "https_insecure" || spec.UpstreamScheme == "https") {
-		transport["tls"] = map[string]any{
-			"insecure_skip_verify": true,
+	// In relay mode the local relay speaks TLS to the upstream; Caddy only talks plain HTTP to the relay.
+	if spec.ForwardMode == "direct" && (spec.UpstreamScheme == "https" || spec.TLSSkipVerify) {
+		tlsCfg := map[string]any{}
+		if spec.TLSSkipVerify {
+			tlsCfg["insecure_skip_verify"] = true
+		} else if spec.UpstreamHost != "" {
+			tlsCfg["server_name"] = upstreamHostname(spec.UpstreamHost)
 		}
+		transport["tls"] = tlsCfg
 	}
 
 	revProxy := map[string]any{
@@ -257,22 +269,57 @@ func BuildRoutePayload(spec RouteSpec) map[string]any {
 	}
 
 	reqHeaders := map[string]any{}
+	setReq := map[string][]string{}
+	for k, v := range spec.RequestHeaders {
+		setReq[k] = []string{v}
+	}
+	if spec.UpstreamHost != "" {
+		setReq["Host"] = []string{spec.UpstreamHost}
+	}
 	if spec.ForwardMode == "relay" && spec.RelayKeyHMAC != "" {
-		reqHeaders["set"] = map[string][]string{
-			"X-Vantu-Route":     {spec.RouteID},
-			"X-Vantu-Relay-Key": {spec.RelayKeyHMAC},
-		}
+		setReq["X-Vantu-Route"] = []string{spec.RouteID}
+		setReq["X-Vantu-Relay-Key"] = []string{spec.RelayKeyHMAC}
+	}
+	if len(setReq) > 0 {
+		reqHeaders["set"] = setReq
 	}
 	basicAuth := spec.BasicAuthUser != "" && spec.BasicAuthHash != ""
 	if basicAuth {
 		// Keep the visitor's Basic credentials away from the upstream application.
 		reqHeaders["delete"] = []string{"Authorization"}
 	}
+	headerOps := map[string]any{}
 	if len(reqHeaders) > 0 {
-		revProxy["headers"] = map[string]any{"request": reqHeaders}
+		headerOps["request"] = reqHeaders
+	}
+	if len(spec.ResponseHeaders) > 0 {
+		setResp := map[string][]string{}
+		for k, v := range spec.ResponseHeaders {
+			setResp[k] = []string{v}
+		}
+		headerOps["response"] = map[string]any{"set": setResp}
+	}
+	if len(headerOps) > 0 {
+		revProxy["headers"] = headerOps
 	}
 
-	handles := make([]any, 0, 3)
+	handles := make([]any, 0, 5)
+	if len(spec.IPAllowlist) > 0 {
+		// static_response never calls the next handler, so blocked clients stop here.
+		handles = append(handles, map[string]any{
+			"handler": "subroute",
+			"routes": []map[string]any{{
+				"match": []map[string]any{{
+					"not": []map[string]any{{"remote_ip": map[string]any{"ranges": spec.IPAllowlist}}},
+				}},
+				"handle": []map[string]any{{
+					"handler":     "static_response",
+					"status_code": 403,
+					"body":        "403 Forbidden",
+				}},
+			}},
+		})
+	}
 	if basicAuth {
 		// Caddy accepts base64-wrapped hashes on every 2.x release.
 		password := base64.StdEncoding.EncodeToString([]byte(spec.BasicAuthHash))
@@ -298,6 +345,13 @@ func BuildRoutePayload(spec RouteSpec) map[string]any {
 			"max_size": int64(spec.MaxBodyMB) * 1024 * 1024,
 		})
 	}
+	if spec.Compress && spec.Preset != "sse" {
+		handles = append(handles, map[string]any{
+			"handler":   "encode",
+			"encodings": map[string]any{"zstd": map[string]any{}, "gzip": map[string]any{}},
+			"prefer":    []string{"zstd", "gzip"},
+		})
+	}
 	handles = append(handles, revProxy)
 
 	return map[string]any{
@@ -316,6 +370,13 @@ func PreviewRoutePayload(spec RouteSpec) map[string]any {
 		spec.BasicAuthHash = hiddenHash
 	}
 	return BuildRoutePayload(spec)
+}
+
+func upstreamHostname(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return hostport
 }
 
 // GenerateBootstrapBundle creates zero-agent docker-compose.yml and bootstrap.json with Tailscale + Bearer Secret guard.

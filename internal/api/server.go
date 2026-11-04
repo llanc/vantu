@@ -188,6 +188,7 @@ func (s *Server) buildRouter() chi.Router {
 			priv.Get("/routes", s.handleListRoutes)
 			priv.Post("/routes", s.handlePublishRoute)
 			priv.Get("/routes/{id}", s.handleGetRoute)
+			priv.Put("/routes/{id}", s.handleUpdateRoute)
 			priv.Post("/routes/{id}/probe", s.handleProbeRoute)
 			priv.Patch("/routes/{id}/proxy", s.handleToggleProxy)
 			priv.Put("/routes/{id}/auth", s.handleSetRouteAuth)
@@ -1104,6 +1105,20 @@ func (s *Server) handlePublishRoute(w http.ResponseWriter, r *http.Request) {
 		in.DryRun = true
 	}
 	res, err := s.svc.Publish(r.Context(), in, actorFrom(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, res)
+}
+
+func (s *Server) handleUpdateRoute(w http.ResponseWriter, r *http.Request) {
+	var up orchestrator.RouteUpdate
+	if err := decodeJSON(r, &up); err != nil {
+		writeErr(w, err)
+		return
+	}
+	res, err := s.svc.UpdateRoute(r.Context(), chi.URLParam(r, "id"), up, actorFrom(r))
 	if err != nil {
 		writeErr(w, err)
 		return

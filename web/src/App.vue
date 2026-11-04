@@ -1293,6 +1293,8 @@ function copyText(text: string, label: string) {
 
     <InspectorDrawer
       :route-id="inspectedRouteId"
+      :containers="dash?.containers ?? []"
+      :nodes="dash?.nodes ?? []"
       @close="inspectedRouteId = null"
       @updated="(m) => { refreshDashboard(); showToast(m) }"
       @delete="deleteRouteOptimistic"

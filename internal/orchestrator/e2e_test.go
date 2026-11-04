@@ -463,6 +463,71 @@ func TestFullLifecyclePublishRelayProbeAndDriftReconcile(t *testing.T) {
 		t.Fatalf("disabling basic auth failed (err=%v)", err)
 	}
 
+	// 10c. UpdateRoute edits advanced proxy options in place and they survive a retry.
+	edgeHandlers := func() []any {
+		caddyMu.RLock()
+		defer caddyMu.RUnlock()
+		h, _ := caddyRoutes[caddyID]["handle"].([]any)
+		return h
+	}
+	handlerNames := func() []string {
+		var names []string
+		for _, h := range edgeHandlers() {
+			names = append(names, fmt.Sprint(h.(map[string]any)["handler"]))
+		}
+		return names
+	}
+	maxBody := 32
+	upd, err := svc.UpdateRoute(ctx, rt.ID, orchestrator.RouteUpdate{
+		Preset:         "web",
+		MaxBodyMB:      &maxBody,
+		SkipLocalCheck: true,
+		Proxy: &store.ProxyOptions{
+			UpstreamHost:    "app.lan",
+			Compress:        true,
+			IPAllowlist:     []string{"203.0.113.0/24"},
+			RequestHeaders:  map[string]string{"x-env": "prod"},
+			ResponseHeaders: map[string]string{"X-Frame-Options": "DENY"},
+		},
+	}, "test")
+	if err != nil {
+		t.Fatalf("UpdateRoute failed: %v", err)
+	}
+	if upd.Route.ID != rt.ID || upd.Route.FullDomain != rt.FullDomain || upd.Route.MaxBodyMB != 32 || upd.Route.Preset != "web" {
+		t.Fatalf("UpdateRoute must edit the same route in place: %+v", upd.Route)
+	}
+	if got := strings.Join(handlerNames(), ","); got != "subroute,request_body,encode,reverse_proxy" {
+		t.Fatalf("unexpected edge handler chain %q", got)
+	}
+	rp := edgeHandlers()[3].(map[string]any)
+	hdrs := fmt.Sprint(rp["headers"])
+	for _, want := range []string{"X-Env:[prod]", "Host:[app.lan]", "X-Frame-Options:[DENY]"} {
+		if !strings.Contains(hdrs, want) {
+			t.Fatalf("reverse_proxy headers %s missing %s", hdrs, want)
+		}
+	}
+	if _, err := svc.RetryRoute(ctx, rt.ID, "test"); err != nil || len(edgeHandlers()) != 4 {
+		t.Fatalf("proxy options lost after retry (err=%v, handlers=%v)", err, handlerNames())
+	}
+	if _, err := svc.ToggleProxy(ctx, rt.ID, true, "test"); err == nil {
+		t.Fatal("expected enabling the CDN proxy to fail while an IP allowlist is set")
+	}
+	if _, err := svc.UpdateRoute(ctx, rt.ID, orchestrator.RouteUpdate{
+		SkipLocalCheck: true,
+		Proxy:          &store.ProxyOptions{RequestHeaders: map[string]string{"Host": "x"}},
+	}, "test"); err == nil {
+		t.Fatal("expected a custom Host header to be rejected")
+	}
+	zero := 0
+	if _, err := svc.UpdateRoute(ctx, rt.ID, orchestrator.RouteUpdate{
+		MaxBodyMB: &zero, SkipLocalCheck: true, Proxy: &store.ProxyOptions{},
+	}, "test"); err != nil {
+		t.Fatalf("clearing proxy options failed: %v", err)
+	}
+	if got := strings.Join(handlerNames(), ","); got != "reverse_proxy" {
+		t.Fatalf("expected a bare reverse_proxy after clearing options, got %q", got)
+	}
+
 	if err := svc.DeleteRoute(ctx, rt.ID, true, "test"); err != nil {
 		t.Fatalf("DeleteRoute failed: %v", err)
 	}

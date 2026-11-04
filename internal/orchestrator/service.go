@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
 	"net/url"
@@ -88,6 +89,9 @@ type PublishInput struct {
 	BasicAuthPassword string `json:"basic_auth_password,omitempty"`
 	// BasicAuthHash carries an existing bcrypt hash when re-applying a route.
 	BasicAuthHash string `json:"-"`
+
+	// Proxy replaces the advanced proxy options; nil keeps those of an existing route.
+	Proxy *store.ProxyOptions `json:"proxy,omitempty"`
 
 	SkipLocalCheck bool          `json:"skip_local_check,omitempty"`
 	DryRun         bool          `json:"dry_run,omitempty"`
@@ -765,6 +769,10 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 
 	// Persist provisioning state in SQLite
 	hadExistingDNS := rt.DNSRecordID != ""
+	prevNodeID := ""
+	if prev, pErr := s.store.GetRoute(ctx, rt.ID); pErr == nil && prev.EdgeNodeID != rt.EdgeNodeID {
+		prevNodeID = prev.EdgeNodeID
+	}
 	rt.LifecycleState = "provisioning"
 	rt.Enabled = true
 	if err := s.store.UpsertRoute(ctx, rt); err != nil {
@@ -842,6 +850,13 @@ func (s *Service) Publish(ctx context.Context, in PublishInput, actor string) (*
 	rt.LastError = ""
 	_ = s.store.UpsertRoute(ctx, rt)
 	notifyRoutes()
+	if prevNodeID != "" {
+		if old, oErr := s.store.GetEdgeNode(ctx, prevNodeID); oErr == nil {
+			if secret, sErr := s.vault.Decrypt(old.AuthSecretEnc); sErr == nil {
+				_ = caddy.NewClient(old.CaddyAdminURL, secret).DeleteRoute(ctx, rt.ID)
+			}
+		}
+	}
 	emitStep("caddy_push", "推送 Caddy 路由", "done", fmt.Sprintf("%s (@id=%s%s)", node.Name, caddy.RouteIDPrefix, rt.ID))
 
 	// Step 4: Probe Verification
@@ -940,6 +955,9 @@ func (s *Service) ToggleProxy(ctx context.Context, idOrDomain string, proxied bo
 	}
 	if proxied && !zone.SupportsProxy {
 		return nil, newAppErr("VALIDATION_ERROR", fmt.Sprintf("域名 %s 所属解析厂商不支持 Cloudflare CDN 代理", zone.ZoneName), "", 400, 2)
+	}
+	if proxied && len(rt.Proxy.IPAllowlist) > 0 {
+		return nil, errIPAllowWithCDN()
 	}
 	node, err := s.store.GetEdgeNode(ctx, rt.EdgeNodeID)
 	if err != nil {
@@ -1040,7 +1058,19 @@ func (s *Service) RetryRoute(ctx context.Context, idOrDomain, actor string) (*st
 		return nil, err
 	}
 
-	res, err := s.Publish(ctx, PublishInput{
+	in := inputFromRoute(rt)
+	in.SkipLocalCheck = true
+	res, err := s.Publish(ctx, in, actor)
+	if err != nil {
+		return nil, err
+	}
+	return &res.Route, nil
+}
+
+// inputFromRoute rebuilds the publish input that reproduces an existing route as stored.
+func inputFromRoute(rt *store.Route) PublishInput {
+	proxy := rt.Proxy
+	return PublishInput{
 		RouteID:        rt.ID,
 		SourceType:     rt.SourceType,
 		ContainerName:  rt.ContainerName,
@@ -1059,12 +1089,95 @@ func (s *Service) RetryRoute(ctx context.Context, idOrDomain, actor string) (*st
 		Note:           rt.Note,
 		BasicAuthUser:  rt.BasicAuthUser,
 		BasicAuthHash:  rt.BasicAuthHash,
-		SkipLocalCheck: true,
-	}, actor)
+		Proxy:          &proxy,
+	}
+}
+
+// RouteUpdate edits an existing route; nil or empty fields keep the stored value. The domain is immutable.
+type RouteUpdate struct {
+	SourceType     string              `json:"source_type,omitempty"` // "docker" | "manual"; empty keeps the target
+	ContainerName  string              `json:"container_name,omitempty"`
+	UpstreamScheme string              `json:"upstream_scheme,omitempty"`
+	LocalHost      string              `json:"local_host,omitempty"`
+	LocalPort      int                 `json:"local_port,omitempty"`
+	EdgeNodeID     string              `json:"edge_node_id,omitempty"`
+	ForwardMode    string              `json:"forward_mode,omitempty"`
+	Preset         string              `json:"preset,omitempty"`
+	MaxBodyMB      *int                `json:"max_body_mb,omitempty"`
+	ReadTimeoutSec *int                `json:"read_timeout_sec,omitempty"`
+	Note           *string             `json:"note,omitempty"`
+	Proxy          *store.ProxyOptions `json:"proxy,omitempty"`
+	SkipLocalCheck bool                `json:"skip_local_check,omitempty"`
+}
+
+// UpdateRoute applies edits to an existing route and re-runs the publish pipeline for it.
+func (s *Service) UpdateRoute(ctx context.Context, idOrDomain string, up RouteUpdate, actor string) (*PublishResult, error) {
+	rt, err := s.store.GetRoute(ctx, idOrDomain)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, newAppErr("NOT_FOUND", fmt.Sprintf("未找到路由 %q", idOrDomain), "", 404, 2)
+	}
 	if err != nil {
 		return nil, err
 	}
-	return &res.Route, nil
+	if rt.SourceType == "self" && up.SourceType != "" && up.SourceType != "self" {
+		return nil, newAppErr("VALIDATION_ERROR", "控制台自身的发布路由不能改为其他目标", "", 400, 2)
+	}
+
+	in := inputFromRoute(rt)
+	switch up.SourceType {
+	case "":
+	case "docker":
+		if strings.TrimSpace(up.ContainerName) == "" {
+			return nil, newAppErr("VALIDATION_ERROR", "请指定要发布的本地容器或 IP:Port 目标", "", 400, 2)
+		}
+		in.SourceType, in.ContainerName, in.LocalHost, in.LocalPort = "docker", strings.TrimSpace(up.ContainerName), "", up.LocalPort
+		in.UpstreamScheme = up.UpstreamScheme
+	case "manual":
+		if strings.TrimSpace(up.LocalHost) == "" || up.LocalPort <= 0 {
+			return nil, newAppErr("VALIDATION_ERROR", "请指定要发布的本地容器或 IP:Port 目标", "", 400, 2)
+		}
+		in.SourceType, in.ContainerName, in.LocalHost, in.LocalPort = "manual", "", strings.TrimSpace(up.LocalHost), up.LocalPort
+		in.UpstreamScheme = up.UpstreamScheme
+	default:
+		return nil, newAppErr("VALIDATION_ERROR", "source_type 仅支持 docker 或 manual", "", 400, 2)
+	}
+	if up.EdgeNodeID != "" {
+		in.EdgeNodeID = up.EdgeNodeID
+	}
+	if up.ForwardMode != "" {
+		in.ForwardMode = up.ForwardMode
+	}
+	if up.Preset != "" {
+		in.Preset = up.Preset
+	}
+	if up.MaxBodyMB != nil {
+		in.MaxBodyMB = max(*up.MaxBodyMB, 0)
+	}
+	if up.ReadTimeoutSec != nil {
+		in.ReadTimeoutSec = max(*up.ReadTimeoutSec, 0)
+	}
+	if up.Note != nil {
+		in.Note = *up.Note
+	}
+	if up.Proxy != nil {
+		in.Proxy = up.Proxy
+	}
+	in.SkipLocalCheck = up.SkipLocalCheck
+	in.AdoptDNS = true
+
+	res, err := s.Publish(ctx, in, actor)
+	if err != nil {
+		return nil, err
+	}
+	s.store.AppendAudit(ctx, store.AuditEvent{
+		Severity:    "info",
+		Category:    "route",
+		TargetID:    res.Route.ID,
+		TargetLabel: res.Route.FullDomain,
+		Message:     fmt.Sprintf("已更新 %s 的服务配置", res.Route.FullDomain),
+		Actor:       actor,
+	})
+	return res, nil
 }
 
 // DeleteRoute cleanly removes the route from Edge Caddy, deletes its DNS A record (if deleteDNS=true), and drops it from SQLite.
@@ -1388,14 +1501,7 @@ func (s *Service) prepareRoutePlan(ctx context.Context, in PublishInput) (store.
 
 	readTimeout := in.ReadTimeoutSec
 	if readTimeout <= 0 {
-		switch preset {
-		case "sse":
-			readTimeout = 600
-		case "webdav":
-			readTimeout = 3600
-		default:
-			readTimeout = 60
-		}
+		readTimeout = defaultReadTimeout(preset)
 	}
 
 	proxied := in.DNSProxied
@@ -1406,6 +1512,19 @@ func (s *Service) prepareRoutePlan(ctx context.Context, in PublishInput) (store.
 	authUser, authHash, err := resolveBasicAuth(in, existing)
 	if err != nil {
 		return store.Route{}, nil, nil, err
+	}
+
+	var proxyOpts store.ProxyOptions
+	switch {
+	case in.Proxy != nil:
+		if proxyOpts, err = normalizeProxyOptions(*in.Proxy); err != nil {
+			return store.Route{}, nil, nil, err
+		}
+	case existing != nil:
+		proxyOpts = existing.Proxy
+	}
+	if proxied && len(proxyOpts.IPAllowlist) > 0 {
+		return store.Route{}, nil, nil, errIPAllowWithCDN()
 	}
 
 	rt := store.Route{
@@ -1441,6 +1560,7 @@ func (s *Service) prepareRoutePlan(ctx context.Context, in PublishInput) (store.
 		Note:             strings.TrimSpace(in.Note),
 		BasicAuthUser:    authUser,
 		BasicAuthHash:    authHash,
+		Proxy:            proxyOpts,
 		CreatedAt:        createdAt,
 	}
 
@@ -1796,6 +1916,13 @@ func (s *Service) routeToCaddySpec(rt store.Route) caddy.RouteSpec {
 		RelayKeyHMAC:   hmacKey,
 		BasicAuthUser:  rt.BasicAuthUser,
 		BasicAuthHash:  rt.BasicAuthHash,
+
+		UpstreamHost:    rt.Proxy.UpstreamHost,
+		TLSSkipVerify:   rt.SkipTLSVerify(),
+		Compress:        rt.Proxy.Compress,
+		IPAllowlist:     rt.Proxy.IPAllowlist,
+		RequestHeaders:  rt.Proxy.RequestHeaders,
+		ResponseHeaders: rt.Proxy.ResponseHeaders,
 	}
 }
 
@@ -1848,5 +1975,48 @@ func buildCLICommand(rt store.Route) string {
 	if rt.BasicAuthUser != "" {
 		parts = append(parts, fmt.Sprintf("--auth-user %s --auth-password <password>", rt.BasicAuthUser))
 	}
+	if rt.MaxBodyMB > 0 {
+		parts = append(parts, fmt.Sprintf("--max-body-mb %d", rt.MaxBodyMB))
+	}
+	if rt.ReadTimeoutSec > 0 && rt.ReadTimeoutSec != defaultReadTimeout(rt.Preset) {
+		parts = append(parts, fmt.Sprintf("--read-timeout %d", rt.ReadTimeoutSec))
+	}
+	p := rt.Proxy
+	if p.UpstreamHost != "" {
+		parts = append(parts, "--upstream-host "+shellQuote(p.UpstreamHost))
+	}
+	if p.TLSSkipVerify && rt.Preset != "https_insecure" {
+		parts = append(parts, "--insecure-skip-verify")
+	}
+	if p.Compress {
+		parts = append(parts, "--compress")
+	}
+	for _, ip := range p.IPAllowlist {
+		parts = append(parts, "--allow-ip "+ip)
+	}
+	for _, k := range slices.Sorted(maps.Keys(p.RequestHeaders)) {
+		parts = append(parts, "--req-header "+shellQuote(k+": "+p.RequestHeaders[k]))
+	}
+	for _, k := range slices.Sorted(maps.Keys(p.ResponseHeaders)) {
+		parts = append(parts, "--resp-header "+shellQuote(k+": "+p.ResponseHeaders[k]))
+	}
 	return strings.Join(parts, " ")
+}
+
+func defaultReadTimeout(preset string) int {
+	switch preset {
+	case "sse":
+		return 600
+	case "webdav":
+		return 3600
+	default:
+		return 60
+	}
+}
+
+func shellQuote(s string) string {
+	if s != "" && !strings.ContainsAny(s, " \t'\"\\$`!*?;&|<>()[]{}#~") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

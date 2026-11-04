@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -76,7 +79,16 @@ func (gf *globalFlags) client() *apiClient {
 	return newAPIClient(gf.endpoint, gf.token, gf.sockPath)
 }
 
+// execAPIQuiet is execAPI for intermediate lookups: a successful response is not echoed in --json mode.
+func (gf *globalFlags) execAPIQuiet(ctx context.Context, method, path string, reqBody any, dst any) ([]byte, error) {
+	return gf.doAPI(ctx, method, path, reqBody, dst, false)
+}
+
 func (gf *globalFlags) execAPI(ctx context.Context, method, path string, reqBody any, dst any) ([]byte, error) {
+	return gf.doAPI(ctx, method, path, reqBody, dst, true)
+}
+
+func (gf *globalFlags) doAPI(ctx context.Context, method, path string, reqBody any, dst any, echo bool) ([]byte, error) {
 	env, raw, err := gf.client().call(ctx, method, path, reqBody)
 	if err != nil {
 		if gf.jsonOut {
@@ -115,7 +127,7 @@ func (gf *globalFlags) execAPI(ctx context.Context, method, path string, reqBody
 		return raw, &CLIExitError{ExitCode: exitCode, Err: fmt.Errorf("%s: %s", code, msg)}
 	}
 
-	if gf.jsonOut {
+	if gf.jsonOut && echo {
 		fmt.Println(prettyJSON(raw))
 	}
 	if dst != nil && len(env.Data) > 0 {
@@ -332,6 +344,7 @@ func newDockerCmd(gf *globalFlags) *cobra.Command {
 
 func newPublishCmd(gf *globalFlags) *cobra.Command {
 	var in orchestrator.PublishInput
+	var pf proxyFlags
 	cmd := &cobra.Command{
 		Use:   "publish",
 		Short: tr("一键将本地容器或内网端口发布到公网 HTTPS 域名（幂等创建或更新）", "Publish a local container or LAN port to a public HTTPS domain (idempotent create or update)"),
@@ -339,6 +352,13 @@ func newPublishCmd(gf *globalFlags) *cobra.Command {
   vantu publish --target container:sub2api --domain api.xiaofantu.com --preset sse --dry-run
   vantu publish --target 127.0.0.1:8080 --domain demo.xiaofantu.com --proxied --wait`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if pf.changed(cmd) {
+				opts, err := pf.apply(cmd, store.ProxyOptions{}, false)
+				if err != nil {
+					return err
+				}
+				in.Proxy = &opts
+			}
 			var res orchestrator.PublishResult
 			if _, err := gf.execAPI(cmd.Context(), http.MethodPost, "/api/v1/routes", in, &res); err != nil {
 				return err
@@ -379,7 +399,134 @@ func newPublishCmd(gf *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&in.Note, "note", "", tr("路由备注说明", "Route note"))
 	cmd.Flags().StringVar(&in.BasicAuthUser, "auth-user", "", tr("开启访问认证的用户名（访客需输入用户名与密码）", "Username for access authentication (visitors must enter it with the password)"))
 	cmd.Flags().StringVar(&in.BasicAuthPassword, "auth-password", "", tr("访问认证密码（至少 6 位）", "Access authentication password (at least 6 characters)"))
+	cmd.Flags().IntVar(&in.ReadTimeoutSec, "read-timeout", 0, tr("上游读写超时秒数 (0=按预设默认)", "Upstream read/write timeout in seconds (0 = preset default)"))
+	pf.register(cmd)
 	return cmd
+}
+
+// proxyFlags exposes the advanced edge proxy options on publish and route set.
+type proxyFlags struct {
+	upstreamHost string
+	skipVerify   bool
+	compress     bool
+	allowIPs     []string
+	reqHeaders   []string
+	respHeaders  []string
+}
+
+var proxyFlagNames = []string{"upstream-host", "insecure-skip-verify", "compress", "allow-ip", "req-header", "resp-header"}
+
+func (pf *proxyFlags) register(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&pf.upstreamHost, "upstream-host", "", tr("转发给上游时改写的 Host 头（可带端口）", "Host header sent to the upstream (port optional)"))
+	cmd.Flags().BoolVar(&pf.skipVerify, "insecure-skip-verify", false, tr("跳过 HTTPS 上游证书校验（自签证书时使用）", "Skip HTTPS upstream certificate verification (for self-signed certs)"))
+	cmd.Flags().BoolVar(&pf.compress, "compress", false, tr("在边缘启用 zstd/gzip 压缩", "Enable zstd/gzip compression at the edge"))
+	cmd.Flags().StringArrayVar(&pf.allowIPs, "allow-ip", nil, tr("仅允许该 IP 或 CIDR 访问，可重复；传空字符串清空", "Only allow this IP or CIDR, repeatable; pass an empty string to clear"))
+	cmd.Flags().StringArrayVar(&pf.reqHeaders, "req-header", nil, tr("附加请求头 \"Name: value\"，可重复", "Extra request header \"Name: value\", repeatable"))
+	cmd.Flags().StringArrayVar(&pf.respHeaders, "resp-header", nil, tr("附加响应头 \"Name: value\"，可重复", "Extra response header \"Name: value\", repeatable"))
+}
+
+func (pf *proxyFlags) changed(cmd *cobra.Command) bool {
+	for _, name := range proxyFlagNames {
+		if cmd.Flags().Changed(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// apply overlays the flags the user actually passed onto base. With removeEmpty, "Name:" deletes a header.
+func (pf *proxyFlags) apply(cmd *cobra.Command, base store.ProxyOptions, removeEmpty bool) (store.ProxyOptions, error) {
+	f := cmd.Flags()
+	if f.Changed("upstream-host") {
+		base.UpstreamHost = pf.upstreamHost
+	}
+	if f.Changed("insecure-skip-verify") {
+		base.TLSSkipVerify = pf.skipVerify
+	}
+	if f.Changed("compress") {
+		base.Compress = pf.compress
+	}
+	if f.Changed("allow-ip") {
+		base.IPAllowlist = nil
+		for _, ip := range pf.allowIPs {
+			if ip = strings.TrimSpace(ip); ip != "" {
+				base.IPAllowlist = append(base.IPAllowlist, ip)
+			}
+		}
+	}
+	var err error
+	if f.Changed("req-header") {
+		if base.RequestHeaders, err = mergeHeaderFlags(base.RequestHeaders, pf.reqHeaders, removeEmpty); err != nil {
+			return base, err
+		}
+	}
+	if f.Changed("resp-header") {
+		if base.ResponseHeaders, err = mergeHeaderFlags(base.ResponseHeaders, pf.respHeaders, removeEmpty); err != nil {
+			return base, err
+		}
+	}
+	return base, nil
+}
+
+func mergeHeaderFlags(base map[string]string, items []string, removeEmpty bool) (map[string]string, error) {
+	out := maps.Clone(base)
+	if out == nil {
+		out = map[string]string{}
+	}
+	for _, item := range items {
+		name, value, ok := strings.Cut(item, ":")
+		name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+		if !ok || name == "" {
+			return nil, &CLIExitError{ExitCode: 2, Err: fmt.Errorf(tr("自定义头格式应为 \"Name: value\"：%q", "custom headers must look like \"Name: value\": %q"), item)}
+		}
+		if value == "" && removeEmpty {
+			for k := range out {
+				if strings.EqualFold(k, name) {
+					delete(out, k)
+				}
+			}
+			continue
+		}
+		out[name] = value
+	}
+	return out, nil
+}
+
+// parseTargetFlag maps a --target value onto the route update target fields.
+func parseTargetFlag(target string, up *orchestrator.RouteUpdate) error {
+	target = strings.TrimSpace(target)
+	if name, ok := strings.CutPrefix(target, "container:"); ok {
+		up.SourceType = "docker"
+		if i := strings.LastIndex(name, ":"); i > 0 {
+			if p, err := strconv.Atoi(name[i+1:]); err == nil {
+				up.LocalPort = p
+				name = name[:i]
+			}
+		}
+		up.ContainerName = name
+		return nil
+	}
+	up.SourceType = "manual"
+	up.UpstreamScheme = "http"
+	if rest, ok := strings.CutPrefix(target, "https://"); ok {
+		up.UpstreamScheme, target = "https", rest
+	} else if rest, ok := strings.CutPrefix(target, "http://"); ok {
+		target = rest
+	}
+	target = strings.TrimSuffix(target, "/")
+	if strings.HasPrefix(target, ":") {
+		target = "127.0.0.1" + target
+	}
+	host, portStr, err := net.SplitHostPort(target)
+	if err != nil {
+		return &CLIExitError{ExitCode: 2, Err: fmt.Errorf(tr("目标地址 %q 需要 IP:端口 或 container:名称 格式", "target %q must be IP:port or container:name"), target)}
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > 65535 {
+		return &CLIExitError{ExitCode: 2, Err: fmt.Errorf(tr("端口号 %q 无效", "invalid port %q"), portStr)}
+	}
+	up.LocalHost, up.LocalPort = host, port
+	return nil
 }
 
 func newRouteCmd(gf *globalFlags) *cobra.Command {
@@ -508,6 +655,68 @@ func newRouteCmd(gf *globalFlags) *cobra.Command {
 	authCmd.Flags().StringVar(&authPassword, "password", "", tr("访问认证密码（至少 6 位）", "Access password (at least 6 characters)"))
 	authCmd.Flags().BoolVar(&authOff, "off", false, tr("关闭访问认证", "Remove access authentication"))
 
+	var setTarget, setNode, setPreset, setMode, setNote string
+	var setMaxBody, setReadTimeout int
+	var setSkipCheck bool
+	var setPF proxyFlags
+	setCmd := &cobra.Command{
+		Use:   "set <domain-or-id>",
+		Short: tr("修改已发布路由的目标、节点、预设与高级代理选项（域名不可修改）", "Change a route's target, node, preset and advanced proxy options (the domain cannot change)"),
+		Example: `  vantu route set api.example.com --target container:sub2api:8080 --preset sse
+  vantu route set pve.example.com --upstream-host pve.lan --insecure-skip-verify
+  vantu route set app.example.com --allow-ip 203.0.113.0/24 --req-header 'X-Env: prod' --compress
+  vantu route set app.example.com --allow-ip '' --req-header 'X-Env:'`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			f := cmd.Flags()
+			var up orchestrator.RouteUpdate
+			if f.Changed("target") {
+				if err := parseTargetFlag(setTarget, &up); err != nil {
+					return err
+				}
+			}
+			up.EdgeNodeID, up.Preset, up.ForwardMode = setNode, setPreset, setMode
+			if f.Changed("max-body-mb") {
+				up.MaxBodyMB = &setMaxBody
+			}
+			if f.Changed("read-timeout") {
+				up.ReadTimeoutSec = &setReadTimeout
+			}
+			if f.Changed("note") {
+				up.Note = &setNote
+			}
+			up.SkipLocalCheck = setSkipCheck
+			if setPF.changed(cmd) {
+				var detail orchestrator.RouteDetail
+				if _, err := gf.execAPIQuiet(cmd.Context(), http.MethodGet, "/api/v1/routes/"+args[0], nil, &detail); err != nil {
+					return err
+				}
+				opts, err := setPF.apply(cmd, detail.Route.Proxy, true)
+				if err != nil {
+					return err
+				}
+				up.Proxy = &opts
+			}
+			var res orchestrator.PublishResult
+			if _, err := gf.execAPI(cmd.Context(), http.MethodPut, "/api/v1/routes/"+args[0], up, &res); err != nil {
+				return err
+			}
+			if !gf.jsonOut {
+				fmt.Printf(tr("已更新 %s 的服务配置 -> %s\n", "Updated route %s -> %s\n"), res.Route.FullDomain, res.Route.LifecycleState)
+			}
+			return nil
+		},
+	}
+	setCmd.Flags().StringVar(&setTarget, "target", "", tr("新的发布目标 (container:名称[:端口], 127.0.0.1:8080, https://192.168.1.2:8006)", "New target (container:name[:port], 127.0.0.1:8080, https://192.168.1.2:8006)"))
+	setCmd.Flags().StringVar(&setNode, "node", "", tr("迁移到另一台边缘节点（名称或 ID）", "Move to another edge node (name or ID)"))
+	setCmd.Flags().StringVar(&setPreset, "preset", "", tr("协议预设: web | sse | webdav | https_insecure", "Proxy preset: web | sse | webdav | https_insecure"))
+	setCmd.Flags().StringVar(&setMode, "mode", "", tr("转发通道: auto | direct | relay", "Forwarding mode: auto | direct | relay"))
+	setCmd.Flags().IntVar(&setMaxBody, "max-body-mb", 0, tr("限制最大上传请求体大小 (MB, 0=不限制)", "Maximum request body size in MB (0 = unlimited)"))
+	setCmd.Flags().IntVar(&setReadTimeout, "read-timeout", 0, tr("上游读写超时秒数 (0=按预设默认)", "Upstream read/write timeout in seconds (0 = preset default)"))
+	setCmd.Flags().StringVar(&setNote, "note", "", tr("路由备注说明", "Route note"))
+	setCmd.Flags().BoolVar(&setSkipCheck, "skip-local-check", false, tr("跳过发布前本地端口连通性探测", "Skip the local port reachability check before publishing"))
+	setPF.register(setCmd)
+
 	pauseCmd := &cobra.Command{
 		Use:   "pause <domain-or-id>",
 		Short: tr("临时暂停路由转发（保留 DNS 记录与本地配置）", "Temporarily pause forwarding (keeps DNS records and local config)"),
@@ -571,7 +780,7 @@ func newRouteCmd(gf *globalFlags) *cobra.Command {
 	rmCmd.Flags().BoolVarP(&rmYes, "yes", "y", false, tr("跳过交互确认直接删除", "Delete without interactive confirmation"))
 	rmCmd.Flags().BoolVar(&keepDNS, "keep-dns", false, tr("仅移除边缘反代规则，保留远端 DNS 记录", "Only remove the edge proxy rule and keep the DNS record"))
 
-	routeCmd.AddCommand(lsCmd, inspectCmd, proxyCmd, authCmd, pauseCmd, resumeCmd, retryCmd, rmCmd)
+	routeCmd.AddCommand(lsCmd, inspectCmd, setCmd, proxyCmd, authCmd, pauseCmd, resumeCmd, retryCmd, rmCmd)
 	return routeCmd
 }
 

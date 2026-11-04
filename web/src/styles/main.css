@@ -919,6 +919,62 @@ table.swiss-table {
   background: var(--accent-soft);
 }
 .pick-item.published:not(.selected) { background: var(--bg-subtle); }
+/* Advanced proxy options & route editing */
+.adv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+  margin-top: 8px;
+}
+.adv-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.adv-field .select { width: 100%; }
+.adv-wide { grid-column: 1 / -1; }
+.adv-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.adv-hint { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.adv-warn { color: var(--warn-fg); }
+.adv-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.adv-check input { margin-top: 3px; }
+.adv-check > span { display: flex; flex-direction: column; gap: 2px; }
+.adv-textarea { height: auto; padding: 8px 12px; resize: vertical; font-size: 13px; line-height: 1.5; }
+.kv-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 9px 12px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border-line);
+}
+.kv-row:last-child { border-bottom: none; }
+.kv-row > span:first-child { color: var(--text-secondary); flex-shrink: 0; }
+.kv-row > span:last-child { text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.chip-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-line);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+.edit-target-row { display: grid; grid-template-columns: 1fr 150px; gap: 8px; }
+.edit-target-row.manual { grid-template-columns: 100px 1fr 110px; }
+.edit-target-row .select { width: 100%; }
+
 .published-group { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .published-toggle {
   align-self: flex-start;
@@ -1091,7 +1147,7 @@ table.swiss-table {
   .container-pick-list { grid-template-columns: 1fr; }
   .domain-input-group { flex-direction: column; align-items: stretch; }
   .kv-grid { grid-template-columns: 1fr; }
-  .auth-grid { grid-template-columns: 1fr; }
+  .auth-grid, .adv-grid, .edit-target-row, .edit-target-row.manual { grid-template-columns: 1fr; }
   .icon-btn, .btn-primary, .btn-outline, .nav-tab, .cf-switch { min-height: 44px; }
 }
 

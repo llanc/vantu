@@ -86,6 +86,15 @@ vantu route proxy api.example.com --off --json
 vantu route auth api.example.com --user alice --password '<password>' --json
 vantu route auth api.example.com --off --json
 
+# Edit an existing route in place (the domain is immutable); only the flags you pass change
+vantu route set api.example.com --target container:sub2api:8080 --preset sse --json
+# Advanced proxy options (also accepted by publish): Host rewrite, skip upstream TLS verify,
+# compression, IP allowlist (incompatible with --proxied), extra request/response headers
+vantu route set pve.example.com --upstream-host pve.lan --insecure-skip-verify --json
+vantu route set app.example.com --allow-ip 203.0.113.0/24 --req-header 'X-Env: prod' --resp-header 'X-Frame-Options: DENY' --compress --json
+# Clear: --allow-ip '' empties the allowlist, 'Name:' with no value removes that header
+vantu route set app.example.com --allow-ip '' --req-header 'X-Env:' --json
+
 # Pause / resume / re-push / remove (removal also cleans up DNS)
 vantu route pause api.example.com --json
 vantu route resume api.example.com --json
@@ -181,6 +190,15 @@ vantu route proxy api.example.com --off --json
 # 要求访客输入用户名与密码（边缘 HTTP Basic Auth），或关闭
 vantu route auth api.example.com --user alice --password '<密码>' --json
 vantu route auth api.example.com --off --json
+
+# 原地修改已发布路由（域名不可改），只改动传入的参数
+vantu route set api.example.com --target container:sub2api:8080 --preset sse --json
+# 高级代理选项（publish 同样支持）：改写 Host、跳过上游证书校验、压缩、
+# IP 白名单（不能与 --proxied 同时使用）、附加请求/响应头
+vantu route set pve.example.com --upstream-host pve.lan --insecure-skip-verify --json
+vantu route set app.example.com --allow-ip 203.0.113.0/24 --req-header 'X-Env: prod' --resp-header 'X-Frame-Options: DENY' --compress --json
+# 清空：--allow-ip '' 清空白名单，'Name:' 不带值表示删除该头
+vantu route set app.example.com --allow-ip '' --req-header 'X-Env:' --json
 
 # 暂停 / 恢复 / 漂移修复重推 / 彻底下线（含自动清理 DNS 记录）
 vantu route pause api.example.com --json

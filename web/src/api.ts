@@ -135,6 +135,32 @@ export interface RouteRecord {
   last_probed_at?: string
   note: string
   basic_auth_user: string
+  proxy: ProxyOptions
+}
+
+export interface ProxyOptions {
+  upstream_host?: string
+  tls_skip_verify?: boolean
+  compress?: boolean
+  ip_allowlist?: string[]
+  request_headers?: Record<string, string>
+  response_headers?: Record<string, string>
+}
+
+export interface RouteUpdatePayload {
+  source_type?: 'docker' | 'manual'
+  container_name?: string
+  upstream_scheme?: string
+  local_host?: string
+  local_port?: number
+  edge_node_id?: string
+  forward_mode?: string
+  preset?: string
+  max_body_mb?: number
+  read_timeout_sec?: number
+  note?: string
+  proxy?: ProxyOptions
+  skip_local_check?: boolean
 }
 
 export interface ProbeSample {
@@ -233,6 +259,9 @@ export interface PublishPayload {
   note?: string
   basic_auth_user?: string
   basic_auth_password?: string
+  max_body_mb?: number
+  read_timeout_sec?: number
+  proxy?: ProxyOptions
   skip_local_check?: boolean
   dry_run?: boolean
 }
@@ -352,6 +381,11 @@ export const api = {
     request<RouteRecord>(`/routes/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
   retryRoute: (id: string) =>
     request<RouteRecord>(`/routes/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+  updateRoute: (id: string, payload: RouteUpdatePayload) =>
+    request<PublishResponse>(`/routes/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   setRouteAuth: (id: string, username: string, password: string) =>
     request<RouteRecord>(`/routes/${encodeURIComponent(id)}/auth`, {
       method: 'PUT',

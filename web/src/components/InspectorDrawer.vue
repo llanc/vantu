@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { api, APIRequestError, type RouteDetail } from '../api'
+import { computed, reactive, ref, watch } from 'vue'
+import { api, APIRequestError, type DiscoveredContainer, type EdgeNode, type RouteDetail, type RouteUpdatePayload } from '../api'
 import { locale, t } from '../i18n'
+import { advancedFromRoute, emptyAdvanced, toAdvancedPayload, type AdvancedForm } from '../proxyForm'
+import ProxyAdvancedFields from './ProxyAdvancedFields.vue'
 
 const props = defineProps<{
   routeId: string | null
+  containers: DiscoveredContainer[]
+  nodes: EdgeNode[]
 }>()
 
 const emit = defineEmits<{
@@ -30,6 +34,7 @@ async function loadDetail() {
   errMsg.value = ''
   confirmDelete.value = false
   authEditing.value = false
+  editing.value = false
   try {
     detail.value = await api.getRouteDetail(props.routeId)
   } catch (err) {
@@ -149,6 +154,128 @@ function saveAuth() {
   }
   applyAuth(authUser.value.trim(), authPassword.value)
 }
+
+// --- Service configuration editing ---
+type Preset = 'web' | 'sse' | 'webdav' | 'https_insecure'
+const editing = ref(false)
+const applying = ref(false)
+const edit = reactive({
+  source: 'manual' as 'docker' | 'manual',
+  container: '',
+  containerPort: '' as number | '',
+  scheme: 'http' as 'http' | 'https',
+  host: '',
+  port: 0 as number | '',
+  node: '',
+  preset: 'web' as Preset,
+  mode: 'auto',
+  note: '',
+  skipCheck: false,
+})
+const editAdvanced = ref<AdvancedForm>(emptyAdvanced())
+
+const presetOptions = computed(() => [
+  { id: 'web', name: t('publish.presetWeb') },
+  { id: 'sse', name: t('publish.presetSSE') },
+  { id: 'webdav', name: t('publish.presetWebdav') },
+  { id: 'https_insecure', name: t('publish.presetInsecure') },
+])
+
+const containerOptions = computed(() => {
+  const names = props.containers.map((c) => c.name)
+  const cur = detail.value?.route.container_name
+  if (cur && !names.includes(cur)) names.unshift(cur)
+  return names
+})
+
+const advancedChips = computed(() => {
+  const r = detail.value?.route
+  if (!r) return []
+  const p = r.proxy ?? {}
+  const chips: string[] = []
+  if (r.max_body_mb > 0) chips.push(t('adv.chipBody', { n: r.max_body_mb }))
+  chips.push(t('adv.chipTimeout', { n: r.read_timeout_sec }))
+  if (p.upstream_host) chips.push(t('adv.chipHost', { v: p.upstream_host }))
+  if (p.tls_skip_verify || r.preset === 'https_insecure') chips.push(t('adv.chipSkip'))
+  if (p.compress) chips.push(t('adv.chipCompress'))
+  if (p.ip_allowlist?.length) chips.push(t('adv.chipIP', { n: p.ip_allowlist.length }))
+  const req = Object.keys(p.request_headers ?? {}).length
+  if (req) chips.push(t('adv.chipReq', { n: req }))
+  const resp = Object.keys(p.response_headers ?? {}).length
+  if (resp) chips.push(t('adv.chipResp', { n: resp }))
+  return chips
+})
+
+function startEdit() {
+  const r = detail.value?.route
+  if (!r) return
+  edit.source = r.source_type === 'docker' ? 'docker' : 'manual'
+  edit.container = r.container_name
+  edit.containerPort = ''
+  edit.scheme = r.upstream_scheme
+  edit.host = r.local_target_host
+  edit.port = r.local_target_port
+  edit.node = r.edge_node_id
+  edit.preset = r.preset
+  edit.mode = r.forward_mode
+  edit.note = r.note
+  edit.skipCheck = false
+  editAdvanced.value = advancedFromRoute(r)
+  errMsg.value = ''
+  editing.value = true
+}
+
+function targetChanged(): boolean {
+  const r = detail.value!.route
+  if (r.source_type === 'self') return false
+  if (edit.source !== r.source_type) return true
+  if (edit.source === 'docker') return edit.container !== r.container_name || edit.containerPort !== ''
+  return edit.host.trim() !== r.local_target_host || Number(edit.port) !== r.local_target_port || edit.scheme !== r.upstream_scheme
+}
+
+async function saveEdit() {
+  const r = detail.value?.route
+  if (!r) return
+  const { payload: adv, badLine } = toAdvancedPayload(editAdvanced.value)
+  if (badLine) {
+    errMsg.value = t('adv.badHeader', { line: badLine })
+    return
+  }
+  const body: RouteUpdatePayload = {
+    edge_node_id: edit.node,
+    preset: edit.preset,
+    forward_mode: edit.mode,
+    note: edit.note.trim(),
+    skip_local_check: edit.skipCheck,
+    ...adv,
+  }
+  if (targetChanged()) {
+    body.source_type = edit.source
+    if (edit.source === 'docker') {
+      body.container_name = edit.container
+      body.local_port = Number(edit.containerPort) || undefined
+      body.upstream_scheme = edit.preset === 'https_insecure' ? 'https' : r.upstream_scheme
+    } else {
+      body.local_host = edit.host.trim()
+      body.local_port = Number(edit.port)
+      body.upstream_scheme = edit.scheme
+    }
+  }
+  // Applying re-runs DNS, Caddy and the probe; progress shows on the route card meanwhile.
+  editing.value = false
+  applying.value = true
+  errMsg.value = ''
+  try {
+    const res = await api.updateRoute(r.id, body)
+    if (props.routeId === r.id) detail.value = await api.getRouteDetail(r.id)
+    emit('updated', t('edit.done', { domain: res.route.full_domain }))
+  } catch (err) {
+    errMsg.value = err instanceof APIRequestError ? `${err.message}${err.suggestion ? ' — ' + err.suggestion : ''}` : (err as Error).message
+    editing.value = true
+  } finally {
+    applying.value = false
+  }
+}
 </script>
 
 <template>
@@ -206,6 +333,114 @@ function saveAuth() {
               </span>
             </div>
           </div>
+        </div>
+
+        <!-- Service Configuration -->
+        <div class="field">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <span class="field-label">{{ t('edit.title') }}</span>
+            <button v-if="!editing" type="button" class="btn-outline btn-sm" :disabled="actionBusy || applying" @click="startEdit">
+              {{ t('edit.edit') }}
+            </button>
+          </div>
+
+          <div v-if="applying" class="republish-note" style="justify-content:flex-start;">
+            <span class="spinner" aria-hidden="true"></span>{{ t('edit.applying') }}
+          </div>
+
+          <div v-if="!editing" class="kv-list">
+            <div class="kv-row">
+              <span>{{ t('edit.target') }}</span>
+              <span class="tnum">
+                {{ detail.route.source_type === 'self' ? t('edit.selfTarget') : detail.route.source_type === 'docker' ? `${detail.route.container_name} → ` : '' }}{{ detail.route.source_type === 'self' ? '' : `${detail.route.upstream_scheme}://${detail.route.local_target_host}:${detail.route.local_target_port}` }}
+              </span>
+            </div>
+            <div class="kv-row">
+              <span>{{ t('edit.preset') }} / {{ t('edit.mode') }}</span>
+              <span>{{ presetOptions.find((p) => p.id === detail!.route.preset)?.name }} · {{ detail.route.forward_mode.toUpperCase() }}</span>
+            </div>
+            <div class="kv-row">
+              <span>{{ t('edit.advanced') }}</span>
+              <span class="chip-list">
+                <span v-for="c in advancedChips" :key="c" class="badge">{{ c }}</span>
+              </span>
+            </div>
+            <div v-if="detail.route.note" class="kv-row">
+              <span>{{ t('edit.note') }}</span>
+              <span>{{ detail.route.note }}</span>
+            </div>
+          </div>
+
+          <form v-else class="edit-form" @submit.prevent="saveEdit">
+            <p class="adv-hint">{{ t('edit.domainFixed') }}</p>
+
+            <div v-if="detail.route.source_type !== 'self'" class="adv-field">
+              <span class="adv-label">{{ t('edit.target') }}</span>
+              <div class="segmented" style="align-self:flex-start;">
+                <button type="button" class="seg-btn" :class="{ active: edit.source === 'docker' }" :disabled="containerOptions.length === 0" @click="edit.source = 'docker'">
+                  {{ t('publish.tabDocker', { n: containers.length }) }}
+                </button>
+                <button type="button" class="seg-btn" :class="{ active: edit.source === 'manual' }" @click="edit.source = 'manual'">
+                  {{ t('publish.tabManual') }}
+                </button>
+              </div>
+              <div v-if="edit.source === 'docker'" class="edit-target-row">
+                <select v-model="edit.container" class="select" :aria-label="t('edit.target')">
+                  <option v-for="name in containerOptions" :key="name" :value="name">{{ name }}</option>
+                </select>
+                <input v-model.number="edit.containerPort" class="input tnum" type="number" min="1" max="65535" :placeholder="t('edit.containerPort')" />
+              </div>
+              <div v-else class="edit-target-row manual">
+                <select v-model="edit.scheme" class="select" :aria-label="t('publish.scheme')">
+                  <option value="http">http://</option>
+                  <option value="https">https://</option>
+                </select>
+                <input v-model="edit.host" class="input tnum" type="text" required :placeholder="t('publish.hostPlaceholder')" />
+                <input v-model.number="edit.port" class="input tnum" type="number" min="1" max="65535" required placeholder="8080" />
+              </div>
+            </div>
+
+            <div class="adv-grid">
+              <label class="adv-field">
+                <span class="adv-label">{{ t('edit.node') }}</span>
+                <select v-model="edit.node" class="select">
+                  <option v-for="n in nodes" :key="n.id" :value="n.id">{{ n.name }} ({{ n.public_ipv4 }})</option>
+                </select>
+              </label>
+              <label class="adv-field">
+                <span class="adv-label">{{ t('edit.mode') }}</span>
+                <select v-model="edit.mode" class="select">
+                  <option value="auto">{{ t('publish.modeAuto') }}</option>
+                  <option value="direct">{{ t('publish.modeDirect') }}</option>
+                  <option value="relay">{{ t('publish.modeRelay') }}</option>
+                </select>
+              </label>
+              <label class="adv-field">
+                <span class="adv-label">{{ t('edit.preset') }}</span>
+                <select v-model="edit.preset" class="select">
+                  <option v-for="p in presetOptions" :key="p.id" :value="p.id">{{ p.name }}</option>
+                </select>
+              </label>
+              <label class="adv-field">
+                <span class="adv-label">{{ t('edit.note') }}</span>
+                <input v-model="edit.note" class="input" type="text" :placeholder="t('edit.notePh')" />
+              </label>
+            </div>
+
+            <span class="adv-label" style="margin-top:4px;">{{ t('adv.title') }}</span>
+            <ProxyAdvancedFields v-model="editAdvanced" :preset="edit.preset" :dns-proxied="detail.route.dns_proxied" />
+
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <label style="display:inline-flex;align-items:center;gap:7px;font-size:14px;color:var(--text-secondary);cursor:pointer;">
+                <input v-model="edit.skipCheck" type="checkbox" />
+                {{ t('publish.skipCheck') }}
+              </label>
+              <span style="display:flex;gap:8px;">
+                <button type="button" class="btn-outline btn-sm" @click="editing = false">{{ t('common.cancel') }}</button>
+                <button type="submit" class="btn-primary btn-sm">{{ t('edit.save') }}</button>
+              </span>
+            </div>
+          </form>
         </div>
 
         <!-- TLS Certificate Info (Single card when DNS Only; Dual card ONLY when CDN proxy is active) -->

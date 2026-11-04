@@ -70,50 +70,66 @@ type EdgeNode struct {
 }
 
 type Route struct {
-	ID                string     `json:"id"`
-	Subdomain         string     `json:"subdomain"`
-	FullDomain        string     `json:"full_domain"`
-	ZoneID            string     `json:"zone_id"`
-	ZoneName          string     `json:"zone_name,omitempty"`
-	SupportsProxy     bool       `json:"supports_proxy"`
-	EdgeNodeID        string     `json:"edge_node_id"`
-	EdgeNodeName      string     `json:"edge_node_name,omitempty"`
-	EdgeNodePublicIP  string     `json:"edge_node_public_ip,omitempty"`
-	EdgeNodeTSRTTMs   int        `json:"edge_node_ts_rtt_ms"`
-	EdgeNodeTSType    string     `json:"edge_node_ts_type,omitempty"`
-	SourceType        string     `json:"source_type"` // "docker" | "manual"
-	ContainerName     string     `json:"container_name"`
-	ContainerID       string     `json:"container_id"`
-	ForwardMode       string     `json:"forward_mode"`    // "direct" | "relay"
-	UpstreamScheme    string     `json:"upstream_scheme"` // "http" | "https"
-	LocalTargetHost   string     `json:"local_target_host"`
-	LocalTargetPort   int        `json:"local_target_port"`
-	EffectiveDial     string     `json:"effective_dial"`
-	RelayTokenHMAC    string     `json:"-"`
-	Preset            string     `json:"preset"` // "web" | "sse" | "webdav" | "https_insecure"
-	MaxBodyMB         int        `json:"max_body_mb"`
-	ReadTimeoutSec    int        `json:"read_timeout_sec"`
-	DNSRecordID       string     `json:"dns_record_id"`
-	DNSProxied        bool       `json:"dns_proxied"`
-	Enabled           bool       `json:"enabled"`
-	LifecycleState    string     `json:"lifecycle_state"`
-	LastError         string     `json:"last_error"`
-	LocalHealthy      bool       `json:"local_healthy"`
-	CaddySynced       bool       `json:"caddy_synced"`
-	OriginTLSOK       bool       `json:"origin_tls_ok"`
-	OriginCertIssuer  string     `json:"origin_cert_issuer"`
-	OriginCertExpires *time.Time `json:"origin_cert_expires,omitempty"`
-	OriginCertDays    int        `json:"origin_cert_days"`
-	PublicCertIssuer  string     `json:"public_cert_issuer"`
-	PublicHTTPCode    int        `json:"public_http_code"`
-	PublicLatencyMs   int        `json:"public_latency_ms"`
-	LastProbedAt      *time.Time `json:"last_probed_at,omitempty"`
-	Note              string     `json:"note"`
-	BasicAuthUser     string     `json:"basic_auth_user"`
-	BasicAuthHash     string     `json:"-"` // bcrypt; enforced by the edge Caddy route
+	ID                string       `json:"id"`
+	Subdomain         string       `json:"subdomain"`
+	FullDomain        string       `json:"full_domain"`
+	ZoneID            string       `json:"zone_id"`
+	ZoneName          string       `json:"zone_name,omitempty"`
+	SupportsProxy     bool         `json:"supports_proxy"`
+	EdgeNodeID        string       `json:"edge_node_id"`
+	EdgeNodeName      string       `json:"edge_node_name,omitempty"`
+	EdgeNodePublicIP  string       `json:"edge_node_public_ip,omitempty"`
+	EdgeNodeTSRTTMs   int          `json:"edge_node_ts_rtt_ms"`
+	EdgeNodeTSType    string       `json:"edge_node_ts_type,omitempty"`
+	SourceType        string       `json:"source_type"` // "docker" | "manual"
+	ContainerName     string       `json:"container_name"`
+	ContainerID       string       `json:"container_id"`
+	ForwardMode       string       `json:"forward_mode"`    // "direct" | "relay"
+	UpstreamScheme    string       `json:"upstream_scheme"` // "http" | "https"
+	LocalTargetHost   string       `json:"local_target_host"`
+	LocalTargetPort   int          `json:"local_target_port"`
+	EffectiveDial     string       `json:"effective_dial"`
+	RelayTokenHMAC    string       `json:"-"`
+	Preset            string       `json:"preset"` // "web" | "sse" | "webdav" | "https_insecure"
+	MaxBodyMB         int          `json:"max_body_mb"`
+	ReadTimeoutSec    int          `json:"read_timeout_sec"`
+	DNSRecordID       string       `json:"dns_record_id"`
+	DNSProxied        bool         `json:"dns_proxied"`
+	Enabled           bool         `json:"enabled"`
+	LifecycleState    string       `json:"lifecycle_state"`
+	LastError         string       `json:"last_error"`
+	LocalHealthy      bool         `json:"local_healthy"`
+	CaddySynced       bool         `json:"caddy_synced"`
+	OriginTLSOK       bool         `json:"origin_tls_ok"`
+	OriginCertIssuer  string       `json:"origin_cert_issuer"`
+	OriginCertExpires *time.Time   `json:"origin_cert_expires,omitempty"`
+	OriginCertDays    int          `json:"origin_cert_days"`
+	PublicCertIssuer  string       `json:"public_cert_issuer"`
+	PublicHTTPCode    int          `json:"public_http_code"`
+	PublicLatencyMs   int          `json:"public_latency_ms"`
+	LastProbedAt      *time.Time   `json:"last_probed_at,omitempty"`
+	Note              string       `json:"note"`
+	BasicAuthUser     string       `json:"basic_auth_user"`
+	BasicAuthHash     string       `json:"-"` // bcrypt; enforced by the edge Caddy route
+	Proxy             ProxyOptions `json:"proxy"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SkipTLSVerify reports whether HTTPS upstream certificates should be accepted without verification.
+func (r Route) SkipTLSVerify() bool {
+	return r.Proxy.TLSSkipVerify || r.Preset == "https_insecure"
+}
+
+// ProxyOptions holds advanced edge proxy tweaks, persisted as one JSON column.
+type ProxyOptions struct {
+	UpstreamHost    string            `json:"upstream_host,omitempty"`
+	TLSSkipVerify   bool              `json:"tls_skip_verify,omitempty"`
+	Compress        bool              `json:"compress,omitempty"`
+	IPAllowlist     []string          `json:"ip_allowlist,omitempty"`
+	RequestHeaders  map[string]string `json:"request_headers,omitempty"`
+	ResponseHeaders map[string]string `json:"response_headers,omitempty"`
 }
 
 type ProbeSample struct {

@@ -9,6 +9,8 @@ import {
   type StepProgress,
 } from '../api'
 import { t } from '../i18n'
+import { advancedCLIFlags, advancedCount, emptyAdvanced, toAdvancedPayload } from '../proxyForm'
+import ProxyAdvancedFields from './ProxyAdvancedFields.vue'
 
 const props = defineProps<{
   containers: DiscoveredContainer[]
@@ -47,6 +49,9 @@ const showCLI = ref(false)
 const authEnabled = ref(false)
 const authUser = ref('')
 const authPassword = ref('')
+const advanced = ref(emptyAdvanced())
+const showAdvanced = ref(false)
+const advancedSet = computed(() => advancedCount(advanced.value))
 
 const unpublishedContainers = computed(() => props.containers.filter((c) => c.published_domains.length === 0))
 // Published containers stay selectable so a second domain can point at the same service.
@@ -131,10 +136,11 @@ const computedCLICommand = computed(() => {
   if (forwardMode.value !== 'auto') parts.push(`--mode ${forwardMode.value}`)
   if (dnsProxied.value && selectedZoneObj.value?.supports_proxy) parts.push('--proxied')
   if (authEnabled.value && authUser.value.trim()) parts.push(`--auth-user ${authUser.value.trim()} --auth-password <password>`)
+  parts.push(...advancedCLIFlags(advanced.value))
   return dryRunCLI.value || parts.join(' ')
 })
 
-watch([sourceTab, selectedContainer, manualHost, manualPort, manualScheme, subdomain, zoneID, nodeID, preset, forwardMode, dnsProxied, authEnabled, authUser], () => {
+watch([sourceTab, selectedContainer, manualHost, manualPort, manualScheme, subdomain, zoneID, nodeID, preset, forwardMode, dnsProxied, authEnabled, authUser, () => JSON.stringify(advanced.value)], () => {
   dryRunCLI.value = ''
 })
 
@@ -158,6 +164,7 @@ function buildPayload(dryRun: boolean) {
     adopt_dns: adoptDNS.value,
     basic_auth_user: authEnabled.value ? authUser.value.trim() : undefined,
     basic_auth_password: authEnabled.value ? authPassword.value : undefined,
+    ...toAdvancedPayload(advanced.value).payload,
     skip_local_check: skipLocalCheck.value,
     dry_run: dryRun,
   }
@@ -180,6 +187,12 @@ async function handlePublish() {
   conflictWarning.value = false
   if (authEnabled.value && (!authUser.value.trim() || authPassword.value.length < 6)) {
     errMsg.value = t('publish.authInvalid')
+    return
+  }
+  const { badLine } = toAdvancedPayload(advanced.value)
+  if (badLine) {
+    errMsg.value = t('adv.badHeader', { line: badLine })
+    showAdvanced.value = true
     return
   }
   loading.value = true
@@ -414,6 +427,23 @@ async function handlePublish() {
             <input v-model="authUser" class="input" type="text" autocomplete="off" :placeholder="t('route.authUser')" :aria-label="t('route.authUser')" />
             <input v-model="authPassword" class="input" type="password" autocomplete="new-password" :placeholder="t('route.authPassword')" :aria-label="t('route.authPassword')" />
           </div>
+        </div>
+
+        <!-- 6. Advanced Proxy Options -->
+        <div class="field">
+          <button type="button" class="published-toggle" :aria-expanded="showAdvanced" @click="showAdvanced = !showAdvanced">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true" :style="{ transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }">
+              <path d="m9 6 6 6-6 6"/>
+            </svg>
+            {{ t('adv.title') }}
+            <span v-if="advancedSet > 0" class="badge info">{{ t('adv.setCount', { n: advancedSet }) }}</span>
+          </button>
+          <ProxyAdvancedFields
+            v-if="showAdvanced"
+            v-model="advanced"
+            :preset="preset"
+            :dns-proxied="dnsProxied && !!selectedZoneObj?.supports_proxy"
+          />
         </div>
 
         <div>

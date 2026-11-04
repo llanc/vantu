@@ -44,6 +44,8 @@ type Server struct {
 	port         int
 	stdTransport *http.Transport
 	tlsSkipTrans *http.Transport
+	// sniTransports caches verifying transports keyed by the TLS server name of an upstream Host override.
+	sniTransports sync.Map
 
 	mu          sync.RWMutex
 	boundAddr   string
@@ -210,7 +212,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	host, port := s.resolveUpstreamTarget(r.Context(), rt)
 	scheme := "http"
-	if rt.UpstreamScheme == "https" || rt.Preset == "https_insecure" {
+	if rt.UpstreamScheme == "https" || rt.SkipTLSVerify() {
 		scheme = "https"
 	}
 
@@ -245,10 +247,23 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) selectTransport(rt *store.Route) http.RoundTripper {
-	if rt.Preset == "https_insecure" || rt.UpstreamScheme == "https" {
+	if rt.SkipTLSVerify() {
 		return s.tlsSkipTrans
 	}
-	return s.stdTransport
+	sni := rt.Proxy.UpstreamHost
+	if rt.UpstreamScheme != "https" || sni == "" {
+		return s.stdTransport
+	}
+	if h, _, err := net.SplitHostPort(sni); err == nil {
+		sni = h
+	}
+	if t, ok := s.sniTransports.Load(sni); ok {
+		return t.(*http.Transport)
+	}
+	t := s.stdTransport.Clone()
+	t.TLSClientConfig = &tls.Config{ServerName: sni}
+	actual, _ := s.sniTransports.LoadOrStore(sni, t)
+	return actual.(*http.Transport)
 }
 
 func (s *Server) resolveUpstreamTarget(ctx context.Context, rt *store.Route) (string, int) {
