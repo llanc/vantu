@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/llanc/vantu/internal/config"
 	"github.com/llanc/vantu/internal/crypto"
+	"github.com/llanc/vantu/internal/i18n"
 	"github.com/llanc/vantu/internal/orchestrator"
 	"github.com/llanc/vantu/internal/skilldoc"
 	"github.com/llanc/vantu/internal/store"
@@ -139,6 +141,8 @@ func (s *Server) buildRouter() chi.Router {
 	r.Use(middleware.Recoverer)
 
 	r.Route("/api/v1", func(api chi.Router) {
+		api.Use(localizeMiddleware)
+
 		// Unauthenticated endpoints
 		api.Get("/healthz", s.handleHealthz)
 		api.Get("/auth/status", s.handleAuthStatus)
@@ -230,6 +234,39 @@ func (s *Server) buildRouter() chi.Router {
 	}
 
 	return r
+}
+
+// --- Localization ---
+
+type bufferedResponse struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (b *bufferedResponse) Header() http.Header         { return b.header }
+func (b *bufferedResponse) WriteHeader(code int)        { b.status = code }
+func (b *bufferedResponse) Write(p []byte) (int, error) { return b.body.Write(p) }
+
+// localizeMiddleware translates Chinese messages in JSON responses for English clients.
+// SSE streams are excluded here and localized per event by handleEventsSSE.
+func localizeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lang := i18n.FromRequest(r)
+		if lang == i18n.ZH || strings.HasSuffix(r.URL.Path, "/events/stream") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		buf := &bufferedResponse{header: w.Header(), status: http.StatusOK}
+		next.ServeHTTP(buf, r)
+		body := buf.body.Bytes()
+		if strings.HasPrefix(buf.header.Get("Content-Type"), "application/json") {
+			body = i18n.LocalizeJSON(lang, body)
+			buf.header.Del("Content-Length")
+		}
+		w.WriteHeader(buf.status)
+		_, _ = w.Write(body)
+	})
 }
 
 // --- Authentication & Rate Limit ---
@@ -742,7 +779,7 @@ func (s *Server) handleSkill(w http.ResponseWriter, r *http.Request) {
 	endpoint := scheme + "://" + r.Host
 	writeOK(w, map[string]any{
 		"endpoint": endpoint,
-		"skill_md": skilldoc.Render(endpoint),
+		"skill_md": skilldoc.Render(endpoint, i18n.FromRequest(r)),
 	})
 }
 
@@ -1172,6 +1209,7 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	lang := i18n.FromRequest(r)
 	ch := s.svc.Hub().Subscribe(r.Context())
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
@@ -1194,6 +1232,7 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+			b = bytes.TrimRight(i18n.LocalizeJSON(lang, b), "\n")
 			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type, string(b))
 			flusher.Flush()
 		}

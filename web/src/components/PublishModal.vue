@@ -8,6 +8,7 @@ import {
   type EdgeNode,
   type StepProgress,
 } from '../api'
+import { t } from '../i18n'
 
 const props = defineProps<{
   containers: DiscoveredContainer[]
@@ -48,12 +49,12 @@ const loading = ref(false)
 const errMsg = ref('')
 const conflictWarning = ref(false)
 
-const presets = [
-  { id: 'web' as const, name: '常规 Web', desc: 'HTTP / WebSocket' },
-  { id: 'sse' as const, name: 'SSE 流式', desc: '禁用缓冲，适合 AI 接口' },
-  { id: 'webdav' as const, name: '大文件传输', desc: '3600s 长连接超时' },
-  { id: 'https_insecure' as const, name: 'HTTPS 自签', desc: '跳过内网自签证书校验' },
-]
+const presets = computed(() => [
+  { id: 'web' as const, name: t('publish.presetWeb'), desc: t('publish.presetWebDesc') },
+  { id: 'sse' as const, name: t('publish.presetSSE'), desc: t('publish.presetSSEDesc') },
+  { id: 'webdav' as const, name: t('publish.presetWebdav'), desc: t('publish.presetWebdavDesc') },
+  { id: 'https_insecure' as const, name: t('publish.presetInsecure'), desc: t('publish.presetInsecureDesc') },
+])
 
 const selectedZoneObj = computed(() => props.zones.find((z) => z.id === zoneID.value) || props.zones[0])
 const selectedNodeObj = computed(() => props.nodes.find((n) => n.id === nodeID.value) || props.nodes[0])
@@ -147,7 +148,7 @@ async function handlePublish() {
   loading.value = true
   try {
     const res = await api.publishRoute(buildPayload(false))
-    emit('published', `已发布 https://${res.route.full_domain}`)
+    emit('published', t('publish.done', { domain: res.route.full_domain }))
   } catch (err) {
     if (err instanceof APIRequestError) {
       errMsg.value = `${err.message}${err.suggestion ? ' — ' + err.suggestion : ''}`
@@ -167,22 +168,22 @@ async function handlePublish() {
   <div class="backdrop" @click.self="emit('close')">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pubModalTitle">
       <div class="modal-head">
-        <h2 id="pubModalTitle" style="font-size:18px;font-weight:700;">发布服务</h2>
-        <button class="icon-btn" type="button" @click="emit('close')" aria-label="关闭">✕</button>
+        <h2 id="pubModalTitle" style="font-size:18px;font-weight:700;">{{ t('publish.title') }}</h2>
+        <button class="icon-btn" type="button" @click="emit('close')" :aria-label="t('common.close')">✕</button>
       </div>
 
       <div v-if="zones.length === 0 || nodes.length === 0" class="modal-body">
         <div class="empty-state" style="padding:28px 20px;">
-          <h3 style="font-size:17px;font-weight:700;">请先完成前置配置</h3>
+          <h3 style="font-size:17px;font-weight:700;">{{ t('publish.prereqTitle') }}</h3>
           <p style="font-size:14px;color:var(--text-secondary);">
-            当前可用域名 {{ zones.length }} 个，边缘节点 {{ nodes.length }} 台。
+            {{ t('publish.prereqDesc', { zones: zones.length, nodes: nodes.length }) }}
           </p>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">
             <button v-if="zones.length === 0" type="button" class="btn-primary" @click="emit('open-dns')">
-              添加 DNS 凭据
+              {{ t('publish.addDNS') }}
             </button>
             <button v-if="nodes.length === 0" type="button" class="btn-primary" @click="emit('open-node')">
-              添加边缘节点
+              {{ t('publish.addNode') }}
             </button>
           </div>
         </div>
@@ -196,14 +197,14 @@ async function handlePublish() {
             style="display:inline-flex;align-items:center;gap:8px;margin-top:8px;font-weight:600;cursor:pointer;"
           >
             <input v-model="adoptDNS" type="checkbox" />
-            覆盖已有同名 DNS 记录
+            {{ t('publish.overwriteDNS') }}
           </label>
         </div>
 
         <!-- 1. Local Target -->
         <div class="field">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <span class="field-label">本地目标</span>
+            <span class="field-label">{{ t('publish.target') }}</span>
             <div class="segmented">
               <button
                 type="button"
@@ -212,7 +213,7 @@ async function handlePublish() {
                 :disabled="containers.length === 0"
                 @click="sourceTab = 'docker'"
               >
-                Docker 容器 ({{ containers.length }})
+                {{ t('publish.tabDocker', { n: containers.length }) }}
               </button>
               <button
                 type="button"
@@ -220,7 +221,7 @@ async function handlePublish() {
                 :class="{ active: sourceTab === 'manual' }"
                 @click="sourceTab = 'manual'"
               >
-                IP 与端口
+                {{ t('publish.tabManual') }}
               </button>
               <button
                 type="button"
@@ -228,7 +229,7 @@ async function handlePublish() {
                 :class="{ active: sourceTab === 'self' }"
                 @click="pickSelf"
               >
-                本机控制台
+                {{ t('publish.tabSelf') }}
               </button>
             </div>
           </div>
@@ -237,7 +238,7 @@ async function handlePublish() {
             v-if="sourceTab === 'self'"
             style="padding:10px 14px;border-radius:8px;border:1px solid var(--border-line);background:var(--bg-subtle);font-size:14px;color:var(--text-secondary);"
           >
-            自动指向当前实例监听端口并启用 SSE 流式转发
+            {{ t('publish.selfDesc') }}
           </div>
 
           <div v-if="sourceTab === 'docker' && containers.length > 0" class="container-pick-list">
@@ -262,18 +263,18 @@ async function handlePublish() {
           </div>
 
           <div v-if="sourceTab === 'manual'" style="display:grid;grid-template-columns:110px 1fr 120px;gap:8px;">
-            <select v-model="manualScheme" class="select" aria-label="内网协议">
+            <select v-model="manualScheme" class="select" :aria-label="t('publish.scheme')">
               <option value="http">http://</option>
               <option value="https">https://</option>
             </select>
-            <input v-model="manualHost" class="input tnum" type="text" placeholder="127.0.0.1 或局域网 IP" required />
+            <input v-model="manualHost" class="input tnum" type="text" :placeholder="t('publish.hostPlaceholder')" required />
             <input v-model.number="manualPort" class="input tnum" type="number" min="1" max="65535" placeholder="8080" required />
           </div>
         </div>
 
         <!-- 2. Public Domain & Edge Node -->
         <div class="field">
-          <label class="field-label" for="subInput">域名与出口节点</label>
+          <label class="field-label" for="subInput">{{ t('publish.domainNode') }}</label>
           <div class="domain-input-group">
             <input
               id="subInput"
@@ -281,13 +282,13 @@ async function handlePublish() {
               class="input"
               style="flex:1;"
               type="text"
-              placeholder="子域名（根域名填 @）"
+              :placeholder="t('publish.subPlaceholder')"
               required
             />
-            <select v-model="zoneID" class="select" aria-label="选择根域名">
+            <select v-model="zoneID" class="select" :aria-label="t('publish.pickZone')">
               <option v-for="z in zones" :key="z.id" :value="z.id">.{{ z.zone_name }}</option>
             </select>
-            <select v-model="nodeID" class="select" aria-label="选择边缘节点">
+            <select v-model="nodeID" class="select" :aria-label="t('publish.pickNode')">
               <option v-for="n in nodes" :key="n.id" :value="n.id">
                 {{ n.name }} ({{ n.public_ipv4 }})
               </option>
@@ -297,7 +298,7 @@ async function handlePublish() {
 
         <!-- 3. Protocol Preset -->
         <div class="field">
-          <span class="field-label">代理预设</span>
+          <span class="field-label">{{ t('publish.preset') }}</span>
           <div class="preset-grid">
             <button
               v-for="pr in presets"
@@ -320,14 +321,14 @@ async function handlePublish() {
             style="display:inline-flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;"
           >
             <input v-model="dnsProxied" type="checkbox" />
-            开启 Cloudflare CDN 代理
+            {{ t('publish.cdn') }}
           </label>
           <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:14px;color:var(--text-secondary);">转发方式:</span>
-            <select v-model="forwardMode" class="select" style="height:34px;" aria-label="转发方式">
-              <option value="auto">自动</option>
-              <option value="direct">Direct 直连</option>
-              <option value="relay">Local Relay 中继</option>
+            <span style="font-size:14px;color:var(--text-secondary);">{{ t('publish.mode') }}</span>
+            <select v-model="forwardMode" class="select" style="height:34px;" :aria-label="t('publish.mode')">
+              <option value="auto">{{ t('publish.modeAuto') }}</option>
+              <option value="direct">{{ t('publish.modeDirect') }}</option>
+              <option value="relay">{{ t('publish.modeRelay') }}</option>
             </select>
           </div>
         </div>
@@ -338,7 +339,7 @@ async function handlePublish() {
             style="font-size:13px;color:var(--accent-focus);font-weight:500;padding:0;"
             @click="showCLI = !showCLI"
           >
-            {{ showCLI ? '隐藏 CLI 命令' : '查看等价 CLI 命令' }}
+            {{ showCLI ? t('publish.hideCLI') : t('publish.showCLI') }}
           </button>
           <pre v-if="showCLI" id="cliPreviewBox" class="code-block" style="margin-top:8px;">{{ computedCLICommand }}</pre>
         </div>
@@ -359,12 +360,12 @@ async function handlePublish() {
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:4px;flex-wrap:wrap;">
           <label style="display:inline-flex;align-items:center;gap:7px;font-size:14px;color:var(--text-secondary);cursor:pointer;">
             <input v-model="skipLocalCheck" type="checkbox" />
-            跳过本地端口可达检查
+            {{ t('publish.skipCheck') }}
           </label>
           <div style="display:flex;gap:10px;">
-            <button type="button" class="btn-outline" @click="emit('close')">取消</button>
+            <button type="button" class="btn-outline" @click="emit('close')">{{ t('common.cancel') }}</button>
             <button type="submit" class="btn-primary" :disabled="loading">
-              {{ loading ? '发布中...' : '发布' }}
+              {{ loading ? t('publish.submitting') : t('publish.submit') }}
             </button>
           </div>
         </div>

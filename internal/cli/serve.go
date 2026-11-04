@@ -31,7 +31,7 @@ func newServeCmd() *cobra.Command {
 	cfg := config.FromEnv()
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "启动小凡兔 (Vantu) 核心控制面守护进程、Web 控制台与 Local Relay 网关",
+		Short: tr("启动小凡兔 (Vantu) 核心控制面守护进程、Web 控制台与 Local Relay 网关", "Start the Vantu control-plane daemon, Web console and Local Relay gateway"),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Resolve before a self-update swaps the file; afterwards /proc/self/exe points at the deleted inode.
 			exe, exeErr := os.Executable()
@@ -40,15 +40,15 @@ func newServeCmd() *cobra.Command {
 				return err
 			}
 			if exeErr != nil {
-				return fmt.Errorf("更新已完成但无法定位可执行文件，请手动重启: %w", exeErr)
+				return fmt.Errorf(tr("更新已完成但无法定位可执行文件，请手动重启: %w", "update finished but the executable could not be located, restart manually: %w"), exeErr)
 			}
-			log.Printf("[vantu] 正在以新版本重启: %s", exe)
+			log.Printf(tr("[vantu] 正在以新版本重启: %s", "[vantu] Restarting with the new version: %s"), exe)
 			return syscall.Exec(exe, os.Args, os.Environ())
 		},
 	}
-	cmd.Flags().StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "Web 控制台与 REST API 监听地址")
-	cmd.Flags().StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "SQLite 与主密钥数据目录")
-	cmd.Flags().IntVar(&cfg.RelayPort, "relay-port", cfg.RelayPort, "Local Relay 安全桥接监听端口")
+	cmd.Flags().StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, tr("Web 控制台与 REST API 监听地址", "Listen address for the Web console and REST API"))
+	cmd.Flags().StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, tr("SQLite 与主密钥数据目录", "Data directory for SQLite and the master key"))
+	cmd.Flags().IntVar(&cfg.RelayPort, "relay-port", cfg.RelayPort, tr("Local Relay 安全桥接监听端口", "Listen port for the Local Relay bridge"))
 	return cmd
 }
 
@@ -124,7 +124,7 @@ func runDaemon(parentCtx context.Context, cfg config.Config) error {
 		go watchUpdates(ctx, updater, hub)
 	}
 
-	log.Printf("[vantu] 小凡兔 · Vantu %s 已启动 -> Web UI & API: http://%s | Unix Socket: %s",
+	log.Printf(tr("[vantu] 小凡兔 · Vantu %s 已启动 -> Web UI & API: http://%s | Unix Socket: %s", "[vantu] Vantu %s started -> Web UI & API: http://%s | Unix socket: %s"),
 		config.Version, cfg.ListenAddr, cfg.SocketPath)
 	err = apiSrv.Start(ctx)
 	if restartRequested.Load() {
@@ -145,7 +145,7 @@ func watchUpdates(ctx context.Context, m *update.Manager, hub *events.Hub) {
 		case <-timer.C:
 		}
 		if info := m.Info(ctx, true); info.HasUpdate {
-			log.Printf("[vantu] 发现新版本 %s（当前 %s）：%s", info.LatestVersion, info.CurrentVersion, info.ReleaseURL)
+			log.Printf(tr("[vantu] 发现新版本 %s（当前 %s）：%s", "[vantu] New version %s available (current %s): %s"), info.LatestVersion, info.CurrentVersion, info.ReleaseURL)
 			hub.Publish("update_available", info)
 		}
 		timer.Reset(12 * time.Hour)

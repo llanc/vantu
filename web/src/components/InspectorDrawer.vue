@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { api, APIRequestError, type RouteDetail } from '../api'
+import { locale, t } from '../i18n'
 
 const props = defineProps<{
   routeId: string | null
@@ -33,6 +34,7 @@ async function loadDetail() {
 }
 
 watch(() => props.routeId, loadDetail, { immediate: true })
+watch(locale, loadDetail)
 
 const paddedHistory = computed(() => {
   const hist = detail.value?.history || []
@@ -62,7 +64,7 @@ async function runProbe() {
   errMsg.value = ''
   try {
     detail.value = await api.probeRoute(detail.value.route.id)
-    emit('updated', `已刷新 ${detail.value.route.full_domain} 状态`)
+    emit('updated', t('inspect.probed', { domain: detail.value.route.full_domain }))
   } catch (err) {
     errMsg.value = err instanceof APIRequestError ? err.message : (err as Error).message
   } finally {
@@ -77,7 +79,7 @@ async function runRetry() {
   try {
     await api.retryRoute(detail.value.route.id)
     detail.value = await api.getRouteDetail(detail.value.route.id)
-    emit('updated', `已同步 ${detail.value.route.full_domain} 配置`)
+    emit('updated', t('inspect.retried', { domain: detail.value.route.full_domain }))
   } catch (err) {
     errMsg.value = err instanceof APIRequestError ? err.message : (err as Error).message
   } finally {
@@ -90,12 +92,13 @@ async function toggleEnabled() {
   actionBusy.value = true
   errMsg.value = ''
   try {
+    const domain = detail.value.route.full_domain
     if (detail.value.route.enabled) {
       await api.pauseRoute(detail.value.route.id)
-      emit('updated', `已暂停 ${detail.value.route.full_domain}`)
+      emit('updated', t('inspect.paused', { domain }))
     } else {
       await api.resumeRoute(detail.value.route.id)
-      emit('updated', `已恢复 ${detail.value.route.full_domain}`)
+      emit('updated', t('inspect.resumed', { domain }))
     }
     detail.value = await api.getRouteDetail(detail.value.route.id)
   } catch (err) {
@@ -112,7 +115,7 @@ async function executeDelete() {
   try {
     const dom = detail.value.route.full_domain
     await api.deleteRoute(detail.value.route.id, deleteDNS.value)
-    emit('updated', `已删除 ${dom}`)
+    emit('updated', t('common.deletedName', { name: dom }))
     emit('close')
   } catch (err) {
     errMsg.value = err instanceof APIRequestError ? err.message : (err as Error).message
@@ -124,21 +127,21 @@ async function executeDelete() {
 
 <template>
   <div v-if="routeId" class="drawer-backdrop" @click.self="emit('close')">
-    <aside class="drawer" role="dialog" aria-modal="true" aria-label="路由详情">
+    <aside class="drawer" role="dialog" aria-modal="true" :aria-label="t('inspect.label')">
       <div class="drawer-head">
         <div>
           <h2 style="font-size:18px;font-weight:700;">
-            {{ detail ? detail.route.full_domain : '加载中...' }}
+            {{ detail ? detail.route.full_domain : t('common.loading') }}
           </h2>
           <p v-if="detail" style="font-size:14px;color:var(--text-secondary);margin-top:2px;">
             {{ detail.route.edge_node_name }} ({{ detail.route.edge_node_public_ip }}) | {{ detail.route.preset.toUpperCase() }}
           </p>
         </div>
-        <button class="icon-btn" type="button" @click="emit('close')" aria-label="关闭">✕</button>
+        <button class="icon-btn" type="button" @click="emit('close')" :aria-label="t('common.close')">✕</button>
       </div>
 
-      <div v-if="loading" class="drawer-body">
-        <p style="color:var(--text-secondary);">加载中...</p>
+      <div v-if="loading && !detail" class="drawer-body">
+        <p style="color:var(--text-secondary);">{{ t('common.loading') }}</p>
       </div>
 
       <div v-else-if="detail" class="drawer-body">
@@ -150,30 +153,30 @@ async function executeDelete() {
 
         <!-- Dynamic Link Path Breakdown -->
         <div class="field">
-          <span class="field-label">链路状态</span>
+          <span class="field-label">{{ t('inspect.path') }}</span>
           <div class="step-list">
             <div class="step-row" :class="detail.route.local_healthy ? 'done' : 'error'">
-              <span>本地目标</span>
-              <span class="tnum">{{ detail.route.local_target_host }}:{{ detail.route.local_target_port }} ({{ detail.route.local_healthy ? '正常' : '不可达' }})</span>
+              <span>{{ t('inspect.local') }}</span>
+              <span class="tnum">{{ detail.route.local_target_host }}:{{ detail.route.local_target_port }} ({{ detail.route.local_healthy ? t('common.ok') : t('inspect.unreachable') }})</span>
             </div>
             <div v-if="detail.route.forward_mode === 'relay'" class="step-row done">
-              <span>本机中继 (Local Relay)</span>
+              <span>{{ t('inspect.relay') }}</span>
               <span class="tnum">{{ detail.route.effective_dial }}</span>
             </div>
             <div class="step-row" :class="detail.route.caddy_synced ? 'done' : 'error'">
-              <span>边缘节点 ({{ detail.route.edge_node_name }})</span>
+              <span>{{ t('inspect.edge', { name: detail.route.edge_node_name }) }}</span>
               <span class="tnum">
-                {{ detail.route.caddy_synced ? '配置已同步' : '未同步' }}{{ detail.route.edge_node_ts_rtt_ms >= 0 ? ` (${detail.route.edge_node_ts_rtt_ms}ms)` : '' }}
+                {{ detail.route.caddy_synced ? t('inspect.synced') : t('inspect.notSynced') }}{{ detail.route.edge_node_ts_rtt_ms >= 0 ? ` (${detail.route.edge_node_ts_rtt_ms}ms)` : '' }}
               </span>
             </div>
             <div v-if="detail.route.dns_proxied" class="step-row done">
               <span>Cloudflare CDN</span>
-              <span>已开启代理</span>
+              <span>{{ t('inspect.cdnOn') }}</span>
             </div>
             <div class="step-row" :class="detail.route.public_http_code > 0 && detail.route.public_http_code < 500 ? 'done' : 'running'">
-              <span>公网 HTTPS 响应</span>
+              <span>{{ t('inspect.public') }}</span>
               <span class="tnum">
-                {{ detail.route.public_http_code > 0 ? `HTTP ${detail.route.public_http_code} (${detail.route.public_latency_ms}ms)` : '待检测' }}
+                {{ detail.route.public_http_code > 0 ? `HTTP ${detail.route.public_http_code} (${detail.route.public_latency_ms}ms)` : t('inspect.pending') }}
               </span>
             </div>
           </div>
@@ -181,28 +184,28 @@ async function executeDelete() {
 
         <!-- TLS Certificate Info (Single card when DNS Only; Dual card ONLY when CDN proxy is active) -->
         <div class="field">
-          <span class="field-label">TLS 证书</span>
+          <span class="field-label">{{ t('inspect.tls') }}</span>
           <div
             v-if="detail.route.dns_proxied"
             style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;"
           >
             <div style="padding:12px 14px;border-radius:8px;border:1px solid var(--border-line);background:var(--bg-subtle);">
-              <div style="font-size:12px;color:var(--text-muted);">边缘源站证书</div>
+              <div style="font-size:12px;color:var(--text-muted);">{{ t('inspect.originCert') }}</div>
               <div style="font-size:15px;font-weight:700;margin-top:4px;">
-                {{ detail.route.origin_cert_issuer || '签发中' }}
+                {{ detail.route.origin_cert_issuer || t('inspect.issuing') }}
               </div>
               <div class="tnum" style="font-size:14px;margin-top:4px;" :style="{ color: detail.route.origin_cert_days >= 14 ? 'var(--ok-fg)' : 'var(--warn-fg)' }">
-                {{ detail.route.origin_cert_days >= 0 ? `剩余 ${detail.route.origin_cert_days} 天` : '待签发' }}
+                {{ detail.route.origin_cert_days >= 0 ? t('inspect.daysLeft', { n: detail.route.origin_cert_days }) : t('inspect.toIssue') }}
               </div>
             </div>
 
             <div style="padding:12px 14px;border-radius:8px;border:1px solid var(--border-line);background:var(--bg-subtle);">
-              <div style="font-size:12px;color:var(--text-muted);">CDN 边缘证书</div>
+              <div style="font-size:12px;color:var(--text-muted);">{{ t('inspect.cdnCert') }}</div>
               <div style="font-size:15px;font-weight:700;margin-top:4px;">
                 {{ detail.route.public_cert_issuer || 'Cloudflare' }}
               </div>
               <div style="font-size:14px;color:var(--text-secondary);margin-top:4px;">
-                访客侧生效
+                {{ t('inspect.visitorSide') }}
               </div>
             </div>
           </div>
@@ -212,13 +215,13 @@ async function executeDelete() {
             style="padding:12px 14px;border-radius:8px;border:1px solid var(--border-line);background:var(--bg-subtle);display:flex;align-items:center;justify-content:space-between;gap:12px;"
           >
             <div>
-              <div style="font-size:12px;color:var(--text-muted);">签发机构</div>
+              <div style="font-size:12px;color:var(--text-muted);">{{ t('inspect.issuer') }}</div>
               <div style="font-size:15px;font-weight:700;margin-top:2px;">
-                {{ detail.route.origin_cert_issuer || '签发中' }}
+                {{ detail.route.origin_cert_issuer || t('inspect.issuing') }}
               </div>
             </div>
             <div class="tnum" style="font-size:14px;font-weight:600;" :style="{ color: detail.route.origin_cert_days >= 14 ? 'var(--ok-fg)' : 'var(--text-secondary)' }">
-              {{ detail.route.origin_cert_days >= 0 ? `剩余 ${detail.route.origin_cert_days} 天` : '待签发' }}
+              {{ detail.route.origin_cert_days >= 0 ? t('inspect.daysLeft', { n: detail.route.origin_cert_days }) : t('inspect.toIssue') }}
             </div>
           </div>
         </div>
@@ -226,8 +229,8 @@ async function executeDelete() {
         <!-- Uptime History Bars -->
         <div class="field">
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span class="field-label">近期检测记录</span>
-            <span class="tnum" style="font-size:12px;color:var(--text-secondary);">{{ detail.history.length }} 次</span>
+            <span class="field-label">{{ t('inspect.history') }}</span>
+            <span class="tnum" style="font-size:12px;color:var(--text-secondary);">{{ t('inspect.historyCount', { n: detail.history.length }) }}</span>
           </div>
           <div class="uptime-bars">
             <div
@@ -239,14 +242,14 @@ async function executeDelete() {
                 err: !bar.empty && !bar.is_ok,
                 warn: !bar.empty && bar.is_ok && bar.public_latency_ms > 500,
               }"
-              :title="bar.empty ? '无数据' : bar.is_ok ? `正常 (${bar.public_latency_ms}ms)` : `异常: ${bar.fail_stage}`"
+              :title="bar.empty ? t('inspect.noData') : bar.is_ok ? t('inspect.barOK', { ms: bar.public_latency_ms }) : t('inspect.barErr', { stage: bar.fail_stage })"
             ></div>
           </div>
         </div>
 
         <!-- Rendered Caddy JSON -->
         <div class="field">
-          <span class="field-label">Caddy 路由配置</span>
+          <span class="field-label">{{ t('inspect.caddy') }}</span>
           <pre class="code-block" style="max-height:200px;overflow-y:auto;">{{ JSON.stringify(detail.caddy_payload, null, 2) }}</pre>
         </div>
 
@@ -255,14 +258,14 @@ async function executeDelete() {
           v-if="confirmDelete"
           style="padding:14px;border-radius:8px;border:1px solid var(--err-border);background:var(--err-bg);display:flex;flex-direction:column;gap:10px;"
         >
-          <strong style="color:var(--err-fg);font-size:14px;">确认删除 {{ detail.route.full_domain }}？</strong>
+          <strong style="color:var(--err-fg);font-size:14px;">{{ t('inspect.confirmDelete', { domain: detail.route.full_domain }) }}</strong>
           <label style="display:inline-flex;align-items:center;gap:8px;font-size:14px;color:var(--text-primary);cursor:pointer;">
             <input v-model="deleteDNS" type="checkbox" />
-            同时删除远端 DNS 解析记录
+            {{ t('inspect.deleteDNS') }}
           </label>
           <div style="display:flex;gap:8px;">
-            <button type="button" class="btn-danger" :disabled="actionBusy" @click="executeDelete">确认删除</button>
-            <button type="button" class="btn-outline" @click="confirmDelete = false">取消</button>
+            <button type="button" class="btn-danger" :disabled="actionBusy" @click="executeDelete">{{ t('inspect.doDelete') }}</button>
+            <button type="button" class="btn-outline" @click="confirmDelete = false">{{ t('common.cancel') }}</button>
           </div>
         </div>
       </div>
@@ -270,17 +273,17 @@ async function executeDelete() {
       <div v-if="detail" class="drawer-foot">
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button type="button" class="btn-outline" :disabled="actionBusy" @click="runProbe">
-            立即检测
+            {{ t('inspect.probe') }}
           </button>
           <button type="button" class="btn-outline" :disabled="actionBusy" @click="runRetry">
-            重新同步
+            {{ t('inspect.retry') }}
           </button>
           <button type="button" class="btn-outline" :disabled="actionBusy" @click="toggleEnabled">
-            {{ detail.route.enabled ? '暂停' : '启用' }}
+            {{ detail.route.enabled ? t('inspect.pause') : t('inspect.resume') }}
           </button>
         </div>
         <button type="button" class="btn-danger" :disabled="actionBusy" @click="confirmDelete = true">
-          删除
+          {{ t('common.delete') }}
         </button>
       </div>
     </aside>

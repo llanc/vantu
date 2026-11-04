@@ -108,6 +108,10 @@ The console checks GitHub Releases every 12 hours and shows a badge in the top b
 - **Docker install**: the container never replaces itself; the console shows the upgrade command `docker compose pull vantu && docker compose up -d vantu`.
 - Set `VANTU_UPDATE_CHECK=off` to disable version checks entirely (e.g. air-gapped hosts).
 
+### Language
+
+Chinese is the default and English is fully supported. In the Web console, use the "EN / 中" button in the top bar; backend messages, the activity log and the AI prompt switch along with it. For the CLI, pass `--lang en` or set `VANTU_LANG=en` (applies to help text, server errors and `skill export`); setting `VANTU_LANG=en` for `vantu serve` also makes the daemon logs English.
+
 ### Local Socket & Remote Endpoint Resolution Order
 
 When `--endpoint` or `VANTU_ENDPOINT` is not explicitly set, the CLI searches for a local Unix Socket in the following order:

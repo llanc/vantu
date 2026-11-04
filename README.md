@@ -108,6 +108,10 @@ xft update --apply
 - **Docker 部署**：容器内不做自替换，控制台会给出升级命令：`docker compose pull vantu && docker compose up -d vantu`。
 - 设置 `VANTU_UPDATE_CHECK=off` 可完全关闭版本检查（离线环境适用）。
 
+### 界面语言
+
+默认中文，支持英文。Web 控制台点击顶栏「EN / 中」切换，后端提示、操作记录与 AI 提示词同步切换。CLI 使用 `--lang en` 或环境变量 `VANTU_LANG=en` 输出英文（帮助文本、服务端报错、`skill export` 均生效）；对 `vantu serve` 设置 `VANTU_LANG=en` 时守护进程日志也为英文。
+
 ### 本地 Socket 与远程连接解析顺序
 
 当未显式指定 `--endpoint` 或 `VANTU_ENDPOINT` 时，CLI 按以下顺序查找本地 Unix Socket 免密通道：

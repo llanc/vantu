@@ -286,6 +286,7 @@ button:disabled { color: var(--text-muted); cursor: not-allowed; }
   place-items: center;
 }
 .icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.lang-btn { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
 .btn-primary {
   min-height: 38px;
   padding: 0 15px;
@@ -383,15 +384,30 @@ button:disabled { color: var(--text-muted); cursor: not-allowed; }
 }
 .summary-value-btn {
   align-self: flex-start;
-  padding: 2px 8px;
-  margin: -2px -8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  margin: 0 -8px;
   border-radius: 6px;
-  color: var(--text-primary);
-  transition: background 0.15s, color 0.15s;
-}
-.summary-value-btn:hover:not(:disabled) {
-  background: var(--accent-soft);
   color: var(--accent-focus);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.summary-value-arrow {
+  opacity: 0.7;
+  transition: transform 0.15s, opacity 0.15s;
+}
+.summary-value-btn:hover {
+  background: var(--accent-soft);
+}
+.summary-value-btn:hover .summary-value-arrow {
+  opacity: 1;
+  transform: translateX(3px);
+}
+.summary-value-btn:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
 }
 .summary-foot {
   font-size: 14px;
@@ -413,11 +429,6 @@ button:disabled { color: var(--text-muted); cursor: not-allowed; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-.discover-chip.more {
-  background: var(--bg-subtle);
-  border-color: var(--border-strong);
-  color: var(--text-secondary);
 }
 .discover-chip:hover { filter: brightness(0.96); }
 

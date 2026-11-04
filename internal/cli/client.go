@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/llanc/vantu/internal/i18n"
 )
 
 type savedCredentials struct {
@@ -128,10 +130,12 @@ func (c *apiClient) call(ctx context.Context, method, path string, body any) (*r
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	req.Header.Set(i18n.HeaderName, lang)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("无法连接到小凡兔守护进程 (%s): %w（请确认 vantu serve 正在运行）", c.baseURL, err)
+		return nil, nil, fmt.Errorf(tr("无法连接到小凡兔守护进程 (%s): %w（请确认 vantu serve 正在运行）",
+			"cannot reach the Vantu daemon (%s): %w (make sure vantu serve is running)"), c.baseURL, err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
@@ -141,7 +145,7 @@ func (c *apiClient) call(ctx context.Context, method, path string, body any) (*r
 
 	var env rawEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, raw, fmt.Errorf("解析服务端响应失败 (HTTP %d): %s", resp.StatusCode, string(raw))
+		return nil, raw, fmt.Errorf(tr("解析服务端响应失败 (HTTP %d): %s", "failed to parse the server response (HTTP %d): %s"), resp.StatusCode, string(raw))
 	}
 	return &env, raw, nil
 }

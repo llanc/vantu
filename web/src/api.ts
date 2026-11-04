@@ -1,3 +1,5 @@
+import { locale } from './i18n'
+
 export interface AuthStatus {
   initialized: boolean
   authenticated: boolean
@@ -277,6 +279,7 @@ export class APIRequestError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
+    'X-Vantu-Lang': locale.value,
     ...(init?.headers as Record<string, string> | undefined),
   }
   if (init?.body && !headers['Content-Type']) {

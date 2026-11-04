@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { api, APIRequestError, type BootstrapBundle } from '../api'
+import { t } from '../i18n'
 
 const emit = defineEmits<{
   (e: 'close'): void
@@ -45,7 +46,7 @@ watch([name, publicIP, tailscaleIP], () => {
 
 function copySnippet(text: string) {
   navigator.clipboard?.writeText(text)
-  emit('toast', '已复制到剪贴板')
+  emit('toast', t('nodeModal.copied'))
 }
 
 async function submit() {
@@ -61,7 +62,7 @@ async function submit() {
       auth_secret: authSecret.value,
       is_default: isDefault.value,
     })
-    emit('saved', `已添加节点 ${node.name}`)
+    emit('saved', t('nodeModal.added', { name: node.name }))
   } catch (err) {
     errMsg.value = err instanceof APIRequestError
       ? `${err.message}${err.suggestion ? ' — ' + err.suggestion : ''}`
@@ -76,8 +77,8 @@ async function submit() {
   <div class="backdrop" @click.self="emit('close')">
     <div class="modal" style="max-width:700px;" role="dialog" aria-modal="true" aria-labelledby="nodeModalTitle">
       <div class="modal-head">
-        <h2 id="nodeModalTitle" style="font-size:18px;font-weight:700;">添加边缘节点</h2>
-        <button class="icon-btn" type="button" @click="emit('close')" aria-label="关闭">✕</button>
+        <h2 id="nodeModalTitle" style="font-size:18px;font-weight:700;">{{ t('nodeModal.title') }}</h2>
+        <button class="icon-btn" type="button" @click="emit('close')" :aria-label="t('common.close')">✕</button>
       </div>
 
       <form class="modal-body" @submit.prevent="submit">
@@ -85,15 +86,15 @@ async function submit() {
 
         <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
           <div class="field">
-            <label class="field-label" for="nodeNameIn">节点名称</label>
+            <label class="field-label" for="nodeNameIn">{{ t('nodeModal.name') }}</label>
             <input id="nodeNameIn" v-model="name" class="input" type="text" placeholder="tokyo-vps" required />
           </div>
           <div class="field">
-            <label class="field-label" for="nodeRegionIn">区域备注（选填）</label>
+            <label class="field-label" for="nodeRegionIn">{{ t('nodeModal.region') }}</label>
             <input id="nodeRegionIn" v-model="region" class="input" type="text" placeholder="Tokyo / HK" />
           </div>
           <div class="field">
-            <label class="field-label" for="nodePubIpIn">公网 IPv4</label>
+            <label class="field-label" for="nodePubIpIn">{{ t('nodes.publicIP') }}</label>
             <input id="nodePubIpIn" v-model="publicIP" class="input tnum" type="text" placeholder="45.76.210.18" required />
           </div>
           <div class="field">
@@ -110,22 +111,22 @@ async function submit() {
               style="font-size:13px;color:var(--accent-focus);font-weight:500;"
               @click="showCustomAdmin = !showCustomAdmin"
             >
-              {{ showCustomAdmin ? '收起 Admin URL' : '自定义 Admin URL' }}
+              {{ showCustomAdmin ? t('nodeModal.hideAdmin') : t('nodeModal.customAdmin') }}
             </button>
           </div>
           <input id="nodeSecIn" v-model="authSecret" class="input tnum" type="text" required />
         </div>
 
         <div v-if="showCustomAdmin" class="field">
-          <label class="field-label" for="nodeAdminUrlIn">Caddy Admin URL（默认 http://TailscaleIP:2019）</label>
+          <label class="field-label" for="nodeAdminUrlIn">{{ t('nodeModal.adminURL') }}</label>
           <input id="nodeAdminUrlIn" v-model="caddyAdminURL" class="input tnum" type="text" placeholder="http://100.116.63.43:2019" />
         </div>
 
         <div v-if="bundle" class="field">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-            <span class="field-label">远端 Caddy 启动配置</span>
+            <span class="field-label">{{ t('nodeModal.bootstrap') }}</span>
             <div class="segmented">
-              <button type="button" class="seg-btn" :class="{ active: activeSnippet === 'quick' }" @click="activeSnippet = 'quick'">一键命令</button>
+              <button type="button" class="seg-btn" :class="{ active: activeSnippet === 'quick' }" @click="activeSnippet = 'quick'">{{ t('nodeModal.quick') }}</button>
               <button type="button" class="seg-btn" :class="{ active: activeSnippet === 'compose' }" @click="activeSnippet = 'compose'">docker-compose.yml</button>
               <button type="button" class="seg-btn" :class="{ active: activeSnippet === 'json' }" @click="activeSnippet = 'json'">bootstrap.json</button>
             </div>
@@ -140,22 +141,22 @@ async function submit() {
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
             <label style="display:inline-flex;align-items:center;gap:8px;font-size:14px;color:var(--text-secondary);cursor:pointer;">
               <input v-model="isDefault" type="checkbox" />
-              设为默认节点
+              {{ t('nodeModal.setDefault') }}
             </label>
             <button
               type="button"
               class="btn-outline"
               @click="copySnippet(activeSnippet === 'quick' ? bundle.quick_command : activeSnippet === 'compose' ? bundle.docker_compose : bundle.bootstrap_json)"
             >
-              复制配置
+              {{ t('nodeModal.copyConfig') }}
             </button>
           </div>
         </div>
 
         <div style="display:flex;justify-content:flex-end;gap:10px;padding-top:4px;">
-          <button type="button" class="btn-outline" @click="emit('close')">取消</button>
+          <button type="button" class="btn-outline" @click="emit('close')">{{ t('common.cancel') }}</button>
           <button type="submit" class="btn-primary" :disabled="loading">
-            {{ loading ? '连接验证中...' : '测试连接并保存' }}
+            {{ loading ? t('nodeModal.verifying') : t('nodeModal.save') }}
           </button>
         </div>
       </form>

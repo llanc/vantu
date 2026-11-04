@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import type { DiscoveredContainer, EdgeNode, RouteRecord } from '../api'
+import { t } from '../i18n'
 
 const props = defineProps<{
   routes: RouteRecord[]
@@ -15,6 +16,7 @@ const emit = defineEmits<{
   (e: 'open-publish'): void
   (e: 'switch-view', view: 'dashboard' | 'nodes' | 'dns' | 'cli'): void
   (e: 'toggle-theme'): void
+  (e: 'toggle-lang'): void
 }>()
 
 const query = ref('')
@@ -35,38 +37,44 @@ const items = computed<CmdAction[]>(() => {
   const list: CmdAction[] = [
     {
       id: 'act-publish',
-      label: '发布服务',
-      tag: '操作',
+      label: t('cmd.publish'),
+      tag: t('cmd.tagAction'),
       run: () => emit('open-publish'),
     },
     {
       id: 'act-theme',
-      label: '切换浅色 / 暗色主题',
-      tag: '偏好',
+      label: t('cmd.theme'),
+      tag: t('cmd.tagPref'),
       run: () => emit('toggle-theme'),
     },
     {
+      id: 'act-lang',
+      label: t('cmd.lang'),
+      tag: t('cmd.tagPref'),
+      run: () => emit('toggle-lang'),
+    },
+    {
       id: 'nav-dash',
-      label: '路由列表',
-      tag: '导航',
+      label: t('cmd.routes'),
+      tag: t('cmd.tagNav'),
       run: () => emit('switch-view', 'dashboard'),
     },
     {
       id: 'nav-nodes',
-      label: `边缘节点 (${props.nodes.length})`,
-      tag: '导航',
+      label: t('cmd.nodes', { n: props.nodes.length }),
+      tag: t('cmd.tagNav'),
       run: () => emit('switch-view', 'nodes'),
     },
     {
       id: 'nav-dns',
-      label: '域名与 DNS',
-      tag: '导航',
+      label: t('cmd.dns'),
+      tag: t('cmd.tagNav'),
       run: () => emit('switch-view', 'dns'),
     },
     {
       id: 'nav-cli',
-      label: '设置与 API Token',
-      tag: '导航',
+      label: t('cmd.settings'),
+      tag: t('cmd.tagNav'),
       run: () => emit('switch-view', 'cli'),
     },
   ]
@@ -75,7 +83,7 @@ const items = computed<CmdAction[]>(() => {
     if (c.published_domains.length === 0) {
       list.push({
         id: `cnt-${c.id}`,
-        label: `发布容器 ${c.name} (${c.recommended_host}:${c.recommended_port})`,
+        label: t('cmd.publishContainer', { name: c.name, target: `${c.recommended_host}:${c.recommended_port}` }),
         tag: c.recommended_mode.toUpperCase(),
         run: () => emit('publish-container', c),
       })
@@ -104,13 +112,13 @@ function trigger(item: CmdAction) {
 
 <template>
   <div class="backdrop" @click.self="emit('close')">
-    <div class="cmd-modal" role="dialog" aria-modal="true" aria-label="快速搜索">
+    <div class="cmd-modal" role="dialog" aria-modal="true" :aria-label="t('nav.quickSearch')">
       <input
         ref="inputEl"
         v-model="query"
         type="text"
         class="cmd-input"
-        placeholder="搜索域名、容器或页面..."
+        :placeholder="t('cmd.placeholder')"
         @keydown.esc="emit('close')"
         @keydown.enter.prevent="items[0] && trigger(items[0])"
       />
@@ -126,7 +134,7 @@ function trigger(item: CmdAction) {
           <span class="badge">{{ it.tag }}</span>
         </button>
         <div v-if="items.length === 0" style="padding:16px;text-align:center;color:var(--text-secondary);font-size:14px;">
-          无匹配结果
+          {{ t('cmd.empty') }}
         </div>
       </div>
     </div>
